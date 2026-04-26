@@ -1,0 +1,116 @@
+---
+title: "Ory Permissions: relationship-based access control"
+description: "Ory Permissions is a Zanzibar-inspired authorization engine that lets you model RBAC, ABAC, and custom permission systems with fine-grained relationship data."
+---
+
+Ory Permissions is the authorization layer of the Ory platform. It implements the design principles of [Google Zanzibar](https://research.google/pubs/pub48190/), a globally consistent system for evaluating fine-grained access control. Using Ory Permissions, you define who can do what to which resource — and the engine evaluates those rules at scale, in real time, across your entire application.
+
+<Info>
+  Ory Permissions is powered by [Ory Keto](https://github.com/ory/keto), the open-source Zanzibar implementation. You can run Keto self-hosted or use it as a managed service through Ory Network.
+</Info>
+
+## Core concepts
+
+Understanding four concepts is enough to start modeling permissions with Ory.
+
+### Namespaces
+
+A namespace defines a type of resource in your application. Every relationship is scoped to a namespace. You declare namespaces in the Ory Permission Language (OPL), which is a subset of TypeScript:
+
+```typescript
+import { Namespace } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+class Document implements Namespace {}
+class Folder implements Namespace {}
+```
+
+Namespaces use upper camel case and the singular form of the type they describe — `Document`, not `documents`.
+
+### Relation tuples (relationships)
+
+A relationship is a fact that links a subject to an object through a named relation. Relationships are the data your permission checks run against. You can read them in natural language:
+
+```
+User:alice is in owners of Document:readme.txt
+User:bob is in viewers of Document:readme.txt
+Folder:src is in parents of Document:package.json
+```
+
+When you ask "can Alice edit `readme.txt`?", Ory Permissions looks up the relevant relationships and evaluates your permission rules against them.
+
+### Objects
+
+An object is the resource you want to control access to. Objects are identified by arbitrary strings within a namespace. UUIDs are recommended because they are unique and carry no encoded data:
+
+```
+Document:ec788a82-a12e-45a4-b906-3e69f78c94e4
+Folder:803a87e9-0da0-486e-bc08-ef559dd8e034
+```
+
+### Subjects
+
+A subject is the entity requesting access — typically a user. Subjects are also identified by arbitrary strings, and UUIDs are recommended. Subjects can refer to a specific individual (a subject ID) or to everyone sharing a relationship with an object (a subject set):
+
+- **Subject ID**: `User:alice`
+- **Subject set**: `Group:admins#members` — everyone who is a member of the `admins` group
+
+Subject sets let you express group membership, role inheritance, and other indirections without duplicating relationships.
+
+## What you can build
+
+Ory Permissions is not limited to one access control pattern. Because permissions are expressed as code in OPL, you can implement any model your application requires.
+
+### Role-based access control (RBAC)
+
+Map users to roles and roles to permissions. For example, assign users to `admin`, `editor`, or `viewer` roles on a per-resource basis. Hierarchical RBAC is supported: the `admin` role can inherit all permissions from `editor`, which inherits from `viewer`.
+
+### Attribute-based access control (ABAC)
+
+Encode attributes such as department, subnet, or time window as UUID-mapped subject IDs. Your application pre-processes requests to map attributes to the appropriate subject, and Ory Permissions evaluates the resulting relationship lookup.
+
+### Custom relationship models
+
+Model domain-specific ownership, delegation, and inheritance. For example, express that anyone who can view a parent folder automatically inherits view access to all documents inside it — without writing that rule for every individual document.
+
+## Ory Permission Language
+
+The Ory Permission Language (OPL) is how you define namespaces, relationships, and permissions. It is written in TypeScript, so it works with your existing toolchain and IDE. Here is a complete example for a document-sharing model:
+
+```typescript
+import { Namespace, Context } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+
+class Document implements Namespace {
+  related: {
+    owners: User[]
+    editors: User[]
+    viewers: User[]
+  }
+
+  permits = {
+    read: (ctx: Context): boolean =>
+      this.related.viewers.includes(ctx.subject) ||
+      this.permits.write(ctx),
+    write: (ctx: Context): boolean =>
+      this.related.editors.includes(ctx.subject) ||
+      this.permits.share(ctx),
+    share: (ctx: Context): boolean =>
+      this.related.owners.includes(ctx.subject),
+  }
+}
+```
+
+You can edit your permission rules in the [Ory Console](https://console.ory.sh/) under **Namespaces & Rules**.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Model permissions" icon="diagram-project" href="/permissions/modeling">
+    Learn how to define namespaces, relationships, and permission rules using OPL with real examples.
+  </Card>
+  <Card title="Check permissions" icon="shield-check" href="/permissions/check-permissions">
+    Create relationships and verify access using the Ory Permissions API.
+  </Card>
+</CardGroup>

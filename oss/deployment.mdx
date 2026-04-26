@@ -1,0 +1,255 @@
+---
+title: "Deploying self-hosted Ory: databases and Kubernetes"
+description: "Configure PostgreSQL, MySQL, or CockroachDB for self-hosted Ory. Deploy with Docker Compose or Kubernetes Helm Charts and tune for production workloads."
+keywords: ["ory deployment", "postgresql", "mysql", "cockroachdb", "kubernetes", "helm", "docker compose", "dsn", "self-hosted"]
+---
+
+Self-hosted Ory projects are stateless services that persist all state in a relational database. This page covers supported databases, connection string formats, connection pool tuning, and Kubernetes deployment using Helm Charts.
+
+## Kubernetes and Helm
+
+Ory is cloud-native and integrates directly with Kubernetes. Official Helm Charts are available for all major Ory projects at [k8s.ory.com/helm](https://k8s.ory.com/helm/).
+
+```bash
+helm repo add ory https://k8s.ory.com/helm/charts
+helm repo update
+```
+
+Install any Ory project into its own namespace:
+
+<CodeGroup>
+
+```bash Ory Kratos
+helm install ory-kratos ory/kratos \
+  --namespace ory \
+  --create-namespace \
+  -f values.yaml
+```
+
+```bash Ory Hydra
+helm install ory-hydra ory/hydra \
+  --namespace ory \
+  --create-namespace \
+  -f values.yaml
+```
+
+```bash Ory Keto
+helm install ory-keto ory/keto \
+  --namespace ory \
+  --create-namespace \
+  -f values.yaml
+```
+
+```bash Ory Oathkeeper
+helm install ory-oathkeeper ory/oathkeeper \
+  --namespace ory \
+  --create-namespace \
+  -f values.yaml
+```
+
+</CodeGroup>
+
+Ory services scale horizontally by running additional replicas — no external coordination service (such as etcd or Memcached) is required. To scale, increase the replica count in your Helm values or Deployment spec:
+
+```yaml
+replicaCount: 3
+```
+
+<Note>
+  Ory Kratos runs a mail courier worker that should run as a single instance to avoid duplicate email delivery. In multi-replica deployments, run the courier as a separate singleton Deployment using the `kratos courier watch` command.
+</Note>
+
+## Data storage and persistence
+
+All Ory projects support the following relational databases. You configure the database by setting the `DSN` (Data Source Name) environment variable or the `dsn` configuration key.
+
+<Warning>
+  SQLite is supported for development and testing only. Do not use SQLite in production — it does not support concurrent access from multiple processes.
+</Warning>
+
+### PostgreSQL
+
+Set `DSN` with a `postgres://` prefix:
+
+```text
+DSN=postgres://user:password@host:5432/database
+```
+
+Append query parameters to control SSL and pooling behavior:
+
+```text
+DSN=postgres://user:password@host:5432/database?sslmode=verify-full&application_name=ory_kratos
+```
+
+**Supported SSL parameters:**
+
+| Parameter | Description |
+|---|---|
+| `sslmode=disable` | No SSL |
+| `sslmode=require` | Always SSL, skip certificate verification |
+| `sslmode=verify-ca` | SSL, verify the certificate was signed by a trusted CA |
+| `sslmode=verify-full` | SSL, verify CA and that the server hostname matches the certificate (recommended) |
+| `sslcert` | Path to TLS client certificate (PEM) |
+| `sslkey` | Path to TLS client private key (PEM) |
+| `sslrootcert` | Path to CA certificate file (PEM) |
+
+**Connection pool parameters:**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `max_conns` | number | Maximum open connections (in use + idle) |
+| `max_idle_conns` | number | Maximum idle connections |
+| `max_conn_lifetime` | duration | Close connections after this duration regardless of idle state (e.g. `30m`) |
+| `max_conn_idle_time` | duration | Close idle connections after this duration (e.g. `5m`) |
+| `connect_timeout` | number | Connection timeout in seconds; `0` means wait indefinitely |
+| `application_name` | string | Identifier shown in database metrics (e.g. `ory_hydra`) |
+| `search_path` | string | PostgreSQL schema search path |
+
+### CockroachDB
+
+Set `DSN` with a `cockroach://` prefix. CockroachDB supports the same parameters as PostgreSQL:
+
+```text
+DSN=cockroach://user:password@host:26257/database?sslmode=verify-full
+```
+
+CockroachDB connections are inexpensive server-side but establishing new TLS connections can take several hundred milliseconds. For production, Ory recommends using a fixed-size connection pool and keeping connections alive:
+
+```text
+DSN=cockroach://user:password@host:26257/database?sslmode=verify-full&pool_max_conn_lifetime=30m&pool_max_conn_lifetime_jitter=5m&pool_max_conn_idle_time=0
+```
+
+<Tip>
+  Set the minimum and maximum pool sizes equal when using CockroachDB. This creates a fixed pool that prevents connection storms during traffic spikes without wasting server resources.
+</Tip>
+
+### MySQL
+
+Set `DSN` with a `mysql://` prefix:
+
+```text
+DSN=mysql://user:password@tcp(host:3306)/database?parseTime=true
+```
+
+The `parseTime=true` parameter is required for correct timestamp handling.
+
+**Additional supported parameters:**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `max_conns` | number | Maximum open connections |
+| `max_idle_conns` | number | Maximum idle connections |
+| `max_conn_lifetime` | duration | Maximum connection lifetime |
+| `max_conn_idle_time` | duration | Maximum idle connection duration |
+| `tls` | bool/string | Enable TLS; use `skip-verify` for self-signed certificates |
+| `timeout` | duration | Dial timeout (e.g. `30s`) |
+| `readTimeout` | duration | I/O read timeout |
+| `writeTimeout` | duration | I/O write timeout |
+| `collation` | string | Client-server collation (e.g. `utf8mb4_unicode_ci`) |
+
+Example with multiple parameters:
+
+```text
+DSN=mysql://user:password@tcp(host:3306)/database?parseTime=true&tls=true&writeTimeout=30s
+```
+
+**AWS Aurora / MySQL 8.0+ migration issues:**
+
+If you see errors like `Cannot change column: used in a foreign key constraint` during migrations, set `sql_mode=TRADITIONAL` in your MySQL configuration. This is a known issue with Aurora and MySQL 8.0+.
+
+### SQLite
+
+Set `DSN` with a `sqlite://` prefix. The `_fk=true` parameter is required for foreign key support:
+
+```text
+DSN=sqlite:///tmp/ory.sqlite?_fk=true
+```
+
+For purely ephemeral in-memory storage (data lost on shutdown), use:
+
+```text
+DSN=memory
+```
+
+## Running database migrations
+
+All Ory projects require you to apply SQL migrations before starting the server for the first time and after upgrading. Run the migration command using the same `DSN` as your server:
+
+<CodeGroup>
+
+```bash Ory Kratos
+kratos migrate sql --yes -e --config /etc/kratos/config.yaml
+```
+
+```bash Ory Hydra
+hydra migrate sql --yes -e
+```
+
+```bash Ory Keto
+keto migrate up --yes
+```
+
+</CodeGroup>
+
+In Kubernetes, use the `automigration` Helm values key to run migrations automatically as an init container:
+
+```yaml
+kratos:
+  automigration:
+    enabled: true
+```
+
+## Docker Compose example
+
+The following Docker Compose setup starts Ory Kratos with a PostgreSQL database. It runs migrations as a one-off service before starting the main server.
+
+```yaml
+version: "3.7"
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: kratos
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: kratos
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  kratos-migrate:
+    image: oryd/kratos:latest
+    environment:
+      DSN: postgres://kratos:secret@postgres:5432/kratos?sslmode=disable
+    command: migrate sql -e --yes
+    depends_on:
+      - postgres
+
+  kratos:
+    image: oryd/kratos:latest
+    ports:
+      - "4433:4433"
+      - "4434:4434"
+    environment:
+      DSN: postgres://kratos:secret@postgres:5432/kratos?sslmode=disable
+    volumes:
+      - ./kratos.yaml:/etc/config/kratos/kratos.yaml
+    command: serve --config /etc/config/kratos/kratos.yaml --dev
+    depends_on:
+      - kratos-migrate
+
+volumes:
+  postgres_data:
+```
+
+<Note>
+  The `--dev` flag disables HTTPS enforcement and enables debug logging. Remove it for production deployments.
+</Note>
+
+## Scaling
+
+Ory services scale horizontally without any additional infrastructure. To handle more traffic, start additional instances pointing at the same database:
+
+- No leader election or consensus protocol is required.
+- No message queue or distributed cache is required.
+- Use your platform's load balancer (Kubernetes Service, AWS ALB, NGINX, etc.) to distribute requests.
+
+For high-traffic PostgreSQL deployments, consider using `pgbouncer` as a connection pooler. For CockroachDB, use a fixed-size connection pool as described above.

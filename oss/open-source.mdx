@@ -1,0 +1,79 @@
+---
+title: "Ory open-source ecosystem: projects and community"
+description: "Explore every Ory open-source project — from Kratos identity management to Hydra OAuth2, Keto, Oathkeeper, Polis, and Elements — all Apache 2.0 licensed."
+keywords: ["ory open source", "kratos", "hydra", "keto", "oathkeeper", "polis", "elements", "apache 2.0", "self-hosted"]
+---
+
+Ory is an open-source-first company. Every major product in the Ory ecosystem is published under the [Apache 2.0 license](https://www.apache.org/licenses/LICENSE-2.0), meaning you can inspect the source, contribute, and self-host without restriction. The commercial Ory Network and Ory Enterprise License are built directly on top of the same open-source code, sharing the same APIs, configuration, and behavior.
+
+## Core server projects
+
+These are the four fully-featured identity and access control servers. Each one ships as a small, stateless binary or Docker image that runs anywhere.
+
+<CardGroup cols={2}>
+  <Card title="Ory Kratos" icon="user" href="https://github.com/ory/kratos">
+    Identity management server. Handles login, registration, MFA, account recovery, session management, and profile updates without you writing a single authentication flow from scratch.
+  </Card>
+  <Card title="Ory Hydra" icon="key" href="https://github.com/ory/hydra">
+    OAuth 2.0 and OpenID Connect provider. Issues access, refresh, and ID tokens in a certified, secure manner and integrates with any existing identity system.
+  </Card>
+  <Card title="Ory Keto" icon="shield" href="https://github.com/ory/keto">
+    Permission server based on Google Zanzibar. Defines and evaluates fine-grained access control policies using relationship-based access control (ReBAC).
+  </Card>
+  <Card title="Ory Oathkeeper" icon="lock" href="https://github.com/ory/oathkeeper">
+    Identity and Access Proxy. Sits in front of your services and enforces authentication and authorization rules — no code changes required in upstream services.
+  </Card>
+</CardGroup>
+
+## Additional projects
+
+<CardGroup cols={2}>
+  <Card title="Ory Polis" icon="building" href="https://github.com/ory/polis">
+    Enterprise Single Sign-On bridge. Translates SAML into standard OAuth 2.0 / OIDC flows, making it easy to connect B2B customers using Entra ID, Okta, or Google Workspace.
+  </Card>
+  <Card title="Ory Elements" icon="layout" href="https://github.com/ory/elements">
+    UI component library for Ory self-service flows. Pre-built components for login, registration, settings, verification, recovery, and OAuth2 consent that you can drop into any frontend.
+  </Card>
+</CardGroup>
+
+## Libraries and SDKs
+
+The following libraries support the Ory ecosystem and are available on GitHub:
+
+| Project | Description | Docs |
+|---|---|---|
+| [Ory SDK](https://github.com/ory/sdk) | Generated SDKs for all popular languages via openapi-generator | [API reference](/reference/api-overview) |
+| [Ory Fosite](https://github.com/ory/fosite) | Extensible OAuth 2.0 and OpenID Connect framework for Go | [godoc](https://pkg.go.dev/github.com/ory/fosite) |
+| [Ory Ladon](https://github.com/ory/ladon) | Access control policy SDK for Go, inspired by AWS IAM | [godoc](https://pkg.go.dev/github.com/ory/ladon) |
+| [Ory Dockertest](https://github.com/ory/dockertest) | Boot Docker images in Go tests with minimal setup | [godoc](https://pkg.go.dev/github.com/ory/dockertest) |
+| [Ory Kubernetes Helm Charts](https://github.com/ory/k8s) | Official Helm Charts for the full Ory stack | [k8s.ory.com](https://k8s.ory.com/helm/) |
+| [Ory Herodot](https://github.com/ory/herodot) | Lightweight Go library for writing HTTP responses and errors | [README](https://github.com/ory/herodot#readme) |
+
+For the complete list of Ory repositories, visit [github.com/ory](https://github.com/ory) and [github.com/ory/awesome-ory](https://github.com/ory/awesome-ory) for community examples.
+
+## License and commercial offerings
+
+All Ory server projects are licensed under **Apache 2.0**. You may use, modify, and redistribute them freely, including in commercial products.
+
+The Ory Network (managed cloud) and Ory Enterprise License (self-hosted, enterprise features) are commercial offerings that fund ongoing open-source development. They are built on the same codebase and expose the same APIs. Open source is not a stepping stone — it remains the foundation.
+
+<Note>
+  Open source remains at the core of Ory. Commercial offerings like Ory Network and the Ory Enterprise License exist to sustain and accelerate open-source development, not to replace it.
+</Note>
+
+## Community and resources
+
+<CardGroup cols={2}>
+  <Card title="Community Slack" icon="slack" href="https://slack.ory.com/">
+    Join thousands of developers discussing Ory projects, getting help, and sharing what they've built.
+  </Card>
+  <Card title="GitHub discussions" icon="message-square" href="https://github.com/discussions?discussions_q=org%3Aory">
+    Ask questions and discuss ideas project-by-project in the official GitHub discussion boards.
+  </Card>
+  <Card title="Awesome Ory" icon="star" href="https://github.com/ory/awesome-ory">
+    Community-maintained list of tutorials, integrations, and example projects built with Ory.
+  </Card>
+  <Card title="Architecture principles" icon="book" href="https://github.com/ory/docs/blob/master/docs/oss/software-architecture-philosophy.mdx">
+    Understand the design philosophy behind Ory: minimal dependencies, 12-factor principles, and stateless processes.
+  </Card>
+</CardGroup>

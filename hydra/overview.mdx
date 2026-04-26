@@ -1,0 +1,109 @@
+---
+title: "Ory Hydra: OAuth2 and OpenID Connect server"
+description: "Ory Hydra is a headless OAuth2 and OpenID Connect server. Learn its architecture, supported grant types, and when to use it for SSO and API delegation."
+keywords: ["ory hydra", "oauth2 server", "openid connect", "sso", "authorization server"]
+---
+
+Ory Hydra is a hardened, certified OAuth 2.0 and OpenID Connect server. Unlike traditional identity providers, Hydra is headless — it handles token issuance, key management, and protocol logic, but delegates login and consent UI entirely to your application. This separation lets you integrate OAuth2 and OpenID Connect into any stack without giving up control of your user experience.
+
+## What Ory Hydra does
+
+Ory Hydra acts as an authorization server. When a user or service wants to access a protected resource, Hydra manages the authorization flow: it redirects users to your login and consent pages, exchanges authorization codes for tokens, and validates those tokens for downstream services.
+
+Hydra does **not** manage user accounts, passwords, or sessions. For identity management features such as registration, login, password reset, and profile management, see [Ory Identities](https://www.ory.sh/docs/identities).
+
+<Note>
+Hydra is an authorization server, not an authentication system. If your primary requirement is user login and registration, evaluate [Ory Identities](https://www.ory.sh/docs/identities) first.
+</Note>
+
+## Headless architecture
+
+Hydra's headless design means it has no built-in UI. When a user initiates an OAuth2 flow, Hydra redirects to login and consent URLs that you configure and own. Your application handles the HTML, user experience, and business logic. Hydra handles the cryptography, token lifecycle, and protocol compliance.
+
+This architecture gives you:
+
+- Full control over the look and feel of login and consent pages
+- Compatibility with any frontend framework or design system
+- The ability to integrate with your existing identity store
+
+The flow works as follows:
+
+1. A client application starts an OAuth2 authorization code flow.
+2. Hydra redirects the user to **your login URL** with a `login_challenge` parameter.
+3. Your app authenticates the user and calls the Hydra admin API to accept or reject the challenge.
+4. Hydra redirects to **your consent URL** with a `consent_challenge` parameter.
+5. Your app displays the requested scopes and calls the Hydra admin API to accept or reject.
+6. Hydra issues tokens and redirects the user back to the client application.
+
+## Supported grant types and standards
+
+Ory Hydra supports the following OAuth2 grant types:
+
+| Grant type | Use case |
+|---|---|
+| `authorization_code` | User-facing applications (web, mobile, SPA) |
+| `client_credentials` | Machine-to-machine, service accounts |
+| `refresh_token` | Obtaining new access tokens without re-authentication |
+| `implicit` | Legacy browser flows (not recommended for new applications) |
+| `urn:ietf:params:oauth:grant-type:device_code` | Devices with limited input capability |
+
+Hydra is a [certified OpenID Connect Provider](https://openid.net/certification/) and supports:
+
+- OpenID Connect Core 1.0
+- OpenID Connect Discovery 1.0
+- OpenID Connect Dynamic Client Registration 1.0
+- OAuth 2.0 Token Introspection (RFC 7662)
+- OAuth 2.0 Token Revocation (RFC 7009)
+- PKCE (RFC 7636)
+- JSON Web Keys (RFC 7517)
+
+## Security model
+
+Ory Hydra is designed to be secure by default. Key safeguards include:
+
+- **Opaque tokens** — access and refresh tokens are stored as HMAC-SHA256-signed values; the database stores only the signature, so a compromised datastore cannot be used to forge valid tokens
+- **Refresh token rotation** — each refresh token is single-use by default; re-use detection revokes the entire token chain
+- **Short expiration times** — tokens use short lifetimes with configurable defaults
+- **Asymmetric cryptography** — ID tokens are signed with RS256 (4096-bit RSA) or ES256 (ECDSA)
+- **AES-256-GCM** — JSON Web Keys are encrypted at rest
+
+Ory tokens use recognizable prefixes that help you detect accidental exposure in git repositories and logs:
+
+- Access tokens: `ory_at_`
+- Refresh tokens: `ory_rt_`
+- Authorization codes: `ory_ac_`
+
+## When to use Ory Hydra
+
+Use Ory Hydra when your project involves one or more of the following:
+
+**SSO provider** — you want to act as an identity provider so other applications or partners can authenticate users through your system using standard OAuth2 or OpenID Connect.
+
+**API access delegation** — you want users to grant third-party applications access to their data on your platform, with explicit consent and scoped permissions.
+
+**Machine-to-machine authorization** — services in your infrastructure need to authenticate to each other using the client credentials grant without user involvement.
+
+**IoT and device flows** — devices with limited input capability (smart TVs, CLI tools) need to obtain tokens using the device authorization grant.
+
+<Tip>
+If you are migrating from Auth0, Keycloak, or another OAuth2-based system, Hydra's standard compliance means you can often reuse your existing client configuration with minimal changes.
+</Tip>
+
+## When not to use Ory Hydra
+
+Hydra is not the right fit if your primary goal is:
+
+- User registration, login, and profile management — use [Ory Identities](https://www.ory.sh/docs/identities)
+- Adding "Sign in with Google" to a single application — use a social sign-in library
+- Building a new app backed by a single API with no third-party access requirements
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Practical guides" icon="book-open" href="/hydra/guides">
+    Configure login and consent UI, manage OAuth2 clients, and work with tokens through real API examples.
+  </Card>
+  <Card title="Self-hosted deployment" icon="server" href="/hydra/self-hosted">
+    Install and run Ory Hydra on your own infrastructure with Docker, configure a database, and prepare for production.
+  </Card>
+</CardGroup>

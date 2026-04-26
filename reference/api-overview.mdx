@@ -1,0 +1,122 @@
+---
+title: 'Ory REST API overview and authentication guide'
+description: 'Learn how to authenticate with Ory Network APIs using API keys, discover base URLs, understand rate limits, and navigate to key API resources.'
+keywords: ['ory api', 'rest api', 'api key', 'authentication', 'base url', 'ory network']
+---
+
+The Ory REST API gives you programmatic access to every resource in your Ory Network project—identities, sessions, OAuth2 clients, permissions, and project configuration. All APIs follow RESTful conventions and return JSON. There are two classes of project APIs: **frontend APIs** for end-user flows, and **admin APIs** for privileged backend operations.
+
+## Base URL
+
+Every Ory Network project has a unique slug. All project API requests target:
+
+```
+https://{project-slug}.projects.oryapis.com
+```
+
+Replace `{project-slug}` with your project's slug, which you can find in the [Ory Console](https://console.ory.sh/) under project settings.
+
+For workspace management operations (creating projects, managing members), use the separate console API base URL:
+
+```
+https://api.console.ory.sh
+```
+
+## Authentication
+
+Ory Network APIs are split into three categories with different authorization requirements.
+
+### Frontend APIs
+
+Frontend APIs handle end-user flows such as registration, login, and session checking. These endpoints do not require any API key—your frontend application calls them directly on behalf of users.
+
+### Project admin APIs
+
+Admin APIs perform privileged operations on project data: creating or deleting identities, managing OAuth2 clients, and reading sessions. These require a **project API key**.
+
+Include your project API key in the `Authorization` header of every admin API request:
+
+```bash
+curl https://{project-slug}.projects.oryapis.com/admin/identities \
+  -H "Authorization: Bearer $ORY_API_KEY"
+```
+
+Project API keys have the prefix `ory_apikey_` or `ory_pat_`.
+
+### Workspace admin APIs
+
+Workspace API keys (`ory_wak_` prefix) authorize operations on workspace-level resources: creating projects, changing project configuration, managing members, and B2B SSO organizations. They do **not** work for managing project data such as identities or OAuth2 clients.
+
+```bash
+curl https://api.console.ory.sh/projects/$PROJECT_ID \
+  -H "Authorization: Bearer $ORY_WORKSPACE_API_KEY"
+```
+
+### Creating API keys
+
+<Steps>
+  <Step title="Open the Ory Console">
+    Navigate to [console.ory.sh](https://console.ory.sh/) and select your project.
+  </Step>
+  <Step title="Go to the Developers page">
+    Select **Developers** in the left sidebar.
+  </Step>
+  <Step title="Create a new API key">
+    Click **Create new API key**, enter a name, choose an expiration date, and click **Create**.
+  </Step>
+  <Step title="Copy the key immediately">
+    The key is displayed only once. Copy it before closing the dialog.
+  </Step>
+</Steps>
+
+<Warning>
+API keys are bound to the project or workspace they were created for, not to individual users. Anyone with access to the key can perform the operations it allows. Rotate keys regularly and never commit them to source control.
+</Warning>
+
+## Rate limits
+
+Ory Network enforces rate limits on a per-project basis. When you exceed the limit, the API returns a `429 Too Many Requests` response. Implement exponential backoff and respect the `Retry-After` header in your client.
+
+## Error codes
+
+Ory APIs use standard HTTP status codes:
+
+| Code | Meaning |
+|------|---------|
+| `400` | Bad request — invalid input or missing required fields |
+| `401` | Unauthorized — missing or invalid API key |
+| `403` | Forbidden — the key does not have permission for this operation |
+| `404` | Not found — the resource does not exist |
+| `409` | Conflict — the resource already exists or a state conflict occurred |
+| `422` | Unprocessable entity — the request body failed validation |
+| `429` | Too many requests — rate limit exceeded |
+| `500` | Internal server error — something went wrong on Ory's side |
+
+Error responses include a JSON body with a `error` object containing `code`, `status`, `message`, and optionally `reason` and `details` fields.
+
+## SDKs
+
+Ory provides generated SDKs for integrating with Ory Network. The unified `ory_client` package covers identities, OAuth2, and permissions in a single client. Consult the [API reference](/reference/api) for code samples.
+
+## API sections
+
+<CardGroup cols={2}>
+  <Card title="Identities" icon="users" href="/reference/api">
+    Create, update, delete, and list user identities. Import identities in bulk and manage identity schemas.
+  </Card>
+  <Card title="Sessions" icon="key" href="/reference/api">
+    List and revoke active sessions, check session validity, and extend session lifetimes.
+  </Card>
+  <Card title="OAuth2 and OIDC" icon="lock" href="/reference/api">
+    Manage OAuth2 clients, introspect tokens, revoke tokens, and handle OpenID Connect flows.
+  </Card>
+  <Card title="Permissions" icon="shield" href="/reference/api">
+    Create and delete relationship tuples, check permissions, and list relationships using the Ory Permission Language.
+  </Card>
+  <Card title="Project configuration" icon="settings" href="/reference/api">
+    Read and update project settings, manage workspaces, and configure identity, OAuth2, and permission services.
+  </Card>
+  <Card title="Full API spec" icon="book-open" href="/reference/api">
+    Browse the complete interactive API reference generated from the Ory OpenAPI specification.
+  </Card>
+</CardGroup>

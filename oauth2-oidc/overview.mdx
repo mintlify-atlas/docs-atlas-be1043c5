@@ -1,0 +1,77 @@
+---
+title: "Ory OAuth2 & OpenID Connect: platform overview"
+description: "Ory OAuth2 & OIDC, built on Ory Hydra, delivers SSO, API access delegation, and machine-to-machine auth with certified standards including PKCE and JARM."
+---
+
+Ory OAuth2 and OpenID Connect is an authorization and identity layer built on [Ory Hydra](https://github.com/ory/hydra), a certified OpenID Connect server. It gives you everything you need to become an OAuth2 provider: issue access tokens, authenticate users with ID tokens, enable single sign-on, and authorize server-to-server communication — all without tying you to a specific user management system.
+
+## What Ory OAuth2 & OIDC provides
+
+Ory OAuth2 and OpenID Connect handles the authorization and authentication delegation layer of your platform. Your applications request tokens from Ory, and Ory enforces who can access what. This separation keeps credential management out of your application code and centralizes authorization policy in one place.
+
+Key capabilities include:
+
+- **Certified OpenID Connect implementation** — Ory meets all requirements set by the OpenID Foundation, so you can trust it for production identity workloads.
+- **Flexible user management** — Ory connects to Ory Identities by default, but works with any existing user management system via its headless API.
+- **Cryptographic key storage** — Safely stores and rotates the keys used to sign JWTs and ID tokens.
+- **Low latency and global deployment** — Optimized for high-traffic applications with data centers worldwide.
+- **Security-first architecture** — Designed to neutralize common OAuth2 attack vectors including CSRF, code injection, and token leakage.
+
+## Standards supported
+
+Ory OAuth2 and OpenID Connect implements the following specifications:
+
+| Standard | Description |
+|---|---|
+| OAuth 2.0 (RFC 6749) | Core authorization framework for delegated access |
+| OAuth 2.0 Token Introspection (RFC 7662) | Validate and inspect access tokens |
+| OAuth 2.0 Token Revocation (RFC 7009) | Revoke access and refresh tokens |
+| OpenID Connect Core 1.0 | Authentication layer on top of OAuth 2.0, including ID tokens |
+| PKCE (RFC 7636) | Proof Key for Code Exchange, required for public clients |
+| JWT (RFC 7519) | JSON Web Token format for access tokens and ID tokens |
+| JWKS (RFC 7517) | JSON Web Key Set for public key distribution |
+
+## OAuth2 actors
+
+Every OAuth2 flow involves four roles:
+
+- **Resource owner** — The user who owns the data and grants access to it.
+- **OAuth2 client** — Your application that requests access on behalf of the user.
+- **Resource server** — The API that hosts protected data and validates tokens.
+- **Authorization server** — Ory OAuth2 and OpenID Connect, which issues tokens after the user authenticates and consents.
+
+## Use cases
+
+### Single sign-on (SSO)
+
+Allow users to authenticate once and access multiple applications without repeated logins. Ory issues ID tokens that client applications use to establish sessions, so users experience seamless access across your product suite.
+
+### API access delegation
+
+Enable third-party applications to access user data with explicit consent. The user approves a specific scope of access — for example, read-only access to their profile — and receives an access token scoped to those permissions. The user's credentials are never shared with the third party.
+
+### Machine-to-machine authentication
+
+Authorize server-to-server communication without a user present using the client credentials grant. Microservices, background jobs, and automated pipelines obtain access tokens directly using their client ID and secret, with no user interaction required.
+
+### Federated identity
+
+Become an identity provider for other applications and services, just as Google or GitHub does. Applications authenticate against your Ory-backed authorization server and receive verified identity claims about your users.
+
+<Note>
+If you need login flows, registration, password reset, or social sign-in for your own application's users, start with [Ory Identities](https://www.ory.sh/docs/identities) instead. OAuth2 is the right choice when you need to authorize third-party access to your users' data or enable machine-to-machine communication.
+</Note>
+
+## Explore this section
+
+<CardGroup cols={2}>
+  <Card title="Authorization code flow" icon="code" href="/oauth2-oidc/authorization-code-flow">
+    Step-by-step guide to the authorization code flow with PKCE for web apps, SPAs, and mobile clients.
+  </Card>
+  <Card title="Client credentials" icon="server" href="/oauth2-oidc/client-credentials">
+    Obtain tokens for machine-to-machine authentication without user interaction.
+  </Card>
+  <Card title="Tokens and scopes" icon="key" href="/oauth2-oidc/tokens-and-scopes">
+    Understand JWT access tokens, ID tokens, refresh tokens, and how scopes control access.
+  </Card>
+</CardGroup>

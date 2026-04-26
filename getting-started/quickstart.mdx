@@ -1,0 +1,185 @@
+---
+title: "Quickstart: Add authentication to your app with Ory"
+description: "Set up a working Ory integration from scratch: create a project, install the CLI, connect your app via the tunnel, and verify your first login flow."
+keywords: ["ory quickstart", "ory cli", "ory network", "authentication setup", "getting started"]
+---
+
+This guide takes you from zero to a working Ory integration. You will create a free Ory Network project, install the Ory CLI, connect your local application through the Ory tunnel, and verify a login flow end to end. The entire process takes about ten minutes.
+
+## Prerequisites
+
+- An [Ory Network account](https://console.ory.sh/registration) (free, no credit card required)
+- Node.js 18+ (for the SDK examples)
+- A terminal
+
+<Steps>
+
+<Step title="Create an Ory Network project">
+
+Sign in to [Ory Console](https://console.ory.sh) and create a new project, or use the CLI after installation:
+
+```shell
+ory create project --name "My App"
+```
+
+Each project is an isolated tenant with its own identity store, OAuth2 server, and permission engine. Note the **Project ID** and **Project Slug** shown in the output — you will need them in the next steps.
+
+<Tip>
+Development projects are free and have no expiry. They are rate-limited and do not support custom domains. Upgrade to a production project when you are ready to go live.
+</Tip>
+
+</Step>
+
+<Step title="Install the Ory CLI">
+
+The Ory CLI is the primary tool for managing projects, running the local tunnel, and interacting with Ory APIs from the command line.
+
+<CodeGroup>
+
+```shell macOS (Homebrew)
+brew install ory/tap/cli
+```
+
+```shell Linux
+bash <(curl https://raw.githubusercontent.com/ory/meta/master/install.sh) -b . ory
+sudo mv ./ory /usr/local/bin/
+```
+
+```shell npm
+npm install -g @ory/cli
+```
+
+</CodeGroup>
+
+Verify the installation:
+
+```shell
+ory version
+```
+
+Log in to your Ory account:
+
+```shell
+ory auth
+```
+
+</Step>
+
+<Step title="Install the Ory SDK">
+
+Add the Ory SDK to your application to interact with Ory APIs.
+
+<CodeGroup>
+
+```shell Node.js
+npm install @ory/client-fetch
+```
+
+```shell Go
+go get github.com/ory/client-go
+```
+
+```shell PHP
+composer require ory/client
+```
+
+</CodeGroup>
+
+</Step>
+
+<Step title="Start the Ory tunnel">
+
+Ory uses cookies to manage browser sessions. For cookies to work correctly, Ory APIs must be served from the same domain as your application. The Ory tunnel proxies Ory APIs to `localhost` so your local app and Ory share the same origin.
+
+Replace `$PROJECT_SLUG` with your project slug (found on the **Connect** page in the Ory Console):
+
+```shell
+ory tunnel --dev --project $PROJECT_SLUG http://localhost:3000
+```
+
+This opens port `4000` on your machine. Your app runs on port `3000`; all Ory API calls must go through `http://localhost:4000`. The `--dev` flag relaxes some security checks that are only relevant in production.
+
+<Warning>
+Do not use `127.0.0.1` — cookies set on `localhost` are not sent to `127.0.0.1`. Always use `localhost` consistently across your app and tunnel.
+</Warning>
+
+</Step>
+
+<Step title="Configure the Ory SDK in your app">
+
+Point the SDK at the tunnel URL (`http://localhost:4000`) during local development. In production, replace this with your Ory project URL or custom domain.
+
+<CodeGroup>
+
+```typescript Node.js / TypeScript
+import { FrontendApi, Configuration } from "@ory/client-fetch"
+
+const ory = new FrontendApi(
+  new Configuration({
+    basePath: process.env.ORY_URL ?? "http://localhost:4000",
+    credentials: "include",
+  }),
+)
+
+// Check if the user has an active session
+const session = await ory.toSession()
+console.log("Logged in as:", session.identity?.id)
+```
+
+```go Go
+import (
+  ory "github.com/ory/client-go"
+)
+
+cfg := ory.NewConfiguration()
+cfg.Servers = ory.ServerConfigurations{
+  {URL: "http://localhost:4000"},
+}
+client := ory.NewAPIClient(cfg)
+```
+
+</CodeGroup>
+
+</Step>
+
+<Step title="Test the login flow">
+
+With the tunnel running, open the Ory Account Experience registration page in your browser:
+
+```
+http://localhost:4000/ui/registration
+```
+
+Register a test user. After completing registration you will be redirected and a session cookie will be set on `localhost`. You can verify the session by calling:
+
+```shell
+curl -s http://localhost:4000/sessions/whoami \
+  -H "Cookie: $(curl -sc /dev/null http://localhost:4000/ui/registration)"
+```
+
+Or from your application code, call `ory.toSession()` — it returns the active session object including the identity traits you configured.
+
+<Note>
+If you receive a 401 response, ensure you are sending requests to `http://localhost:4000` and that the `credentials: "include"` option is set in your SDK configuration.
+</Note>
+
+</Step>
+
+</Steps>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Local development" icon="laptop" href="/getting-started/local-development">
+    Learn more about the Ory tunnel, environments, and API keys for local workflows.
+  </Card>
+  <Card title="OAuth2 authorization code flow" icon="key" href="/oauth2-oidc/authorization-code-flow">
+    Implement SSO and API delegation using the authorization code flow with PKCE.
+  </Card>
+  <Card title="Client credentials" icon="server" href="/oauth2-oidc/client-credentials">
+    Machine-to-machine authentication using the client credentials grant.
+  </Card>
+  <Card title="Migrate to Ory" icon="arrow-right-arrow-left" href="/getting-started/migrate-to-ory">
+    Move existing users from Auth0 or another identity provider.
+  </Card>
+</CardGroup>

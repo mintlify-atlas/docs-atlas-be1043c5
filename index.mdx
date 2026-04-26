@@ -1,133 +1,78 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
-icon: 'star'
+title: "Ory: Identity and Access Management Platform"
+description: "Ory provides open-source identity infrastructure: authentication, authorization, OAuth2/OIDC, and zero-trust networking, available as a managed cloud service."
 ---
 
-## Setting up
+Ory is a global identity and access management platform built on open-source software. Whether you need user login flows, OAuth2 authorization, fine-grained permissions, or a zero-trust access proxy, Ory provides production-ready infrastructure that runs on the Ory Network or on your own servers.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/getting-started/quickstart">
+    Create your Ory Network project and add authentication to your app in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Identities" icon="user-shield" href="/identities/overview">
+    Manage users with login, registration, MFA, passwordless, and social sign-in flows.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="OAuth2 & OIDC" icon="key" href="/oauth2-oidc/overview">
+    Implement single sign-on and API authorization with a certified OAuth2 and OpenID Connect provider.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Permissions" icon="lock" href="/permissions/overview">
+    Add fine-grained, relationship-based access control to any application.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Platform overview
 
-Everything you need to create world-class documentation.
+Ory Network provides all the building blocks for modern identity infrastructure. Each component is open-source and available for self-hosting.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<CardGroup cols={2}>
+  <Card title="Ory Identities" icon="id-card" href="/identities/overview">
+    Full-featured identity management based on Ory Kratos. Supports passwords, passkeys, social sign-in, MFA, and more.
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Ory OAuth2 & OIDC" icon="shield-check" href="/oauth2-oidc/overview">
+    OpenID Certified® OAuth2 and OIDC provider based on Ory Hydra. Powers SSO, API delegation, and token management.
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="Ory Permissions" icon="diagram-project" href="/permissions/overview">
+    Zanzibar-inspired permissions engine based on Ory Keto. Supports RBAC, ABAC, and custom relationship models.
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
+  <Card title="Open Source" icon="code-branch" href="/oss/open-source">
+    All Ory core services are Apache 2.0 licensed. Run Kratos, Hydra, Keto, and Oathkeeper on your own infrastructure.
   </Card>
-</Columns>
+</CardGroup>
 
-## Make your content agent ready
+## Get started
 
-Make your docs work for humans and AI agents alike.
+<Steps>
+  <Step title="Create an Ory Network project">
+    Sign up at [console.ory.sh](https://console.ory.sh) and create a free developer project. Your project provides a dedicated API endpoint and the full Ory stack.
+  </Step>
+  <Step title="Install the Ory CLI">
+    The Ory CLI connects your local environment to your project and lets you manage identities, OAuth2 clients, and permissions from the terminal.
+    ```bash
+    npm install --global @ory/cli
+    ory auth
+    ```
+  </Step>
+  <Step title="Integrate authentication">
+    Use the Ory SDK or REST API to add login, registration, and session management to your application. Ory provides pre-built UI flows or fully headless APIs for custom UIs.
+  </Step>
+  <Step title="Configure your identity model">
+    Define custom identity schemas using JSON Schema to capture the user fields your application needs — email, name, phone number, or any custom attribute.
+  </Step>
+</Steps>
 
-<Columns cols={2}>
-  <Card
-    title="Prompt component"
-    icon="robot"
-    href="/agent-ready/prompt"
-  >
-    Embed shareable AI prompts readers can copy or open in Cursor.
-  </Card>
-  <Card
-    title="Visibility"
-    icon="eye"
-    href="/agent-ready/visibility"
-  >
-    Show different content to humans and agents reading your docs.
-  </Card>
-  <Card
-    title="Contextual menu"
-    icon="bolt"
-    href="/agent-ready/contextual"
-  >
-    Give readers one-click access to Claude, ChatGPT, Cursor, and more.
-  </Card>
-  <Card
-    title="AI coding tools"
-    icon="wand-magic-sparkles"
-    href="/ai-tools/claude-code"
-  >
-    Set up Claude Code, Cursor, or Windsurf with Mintlify's skill.
-  </Card>
-</Columns>
+## Explore the documentation
 
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={2}>
+  <Card title="Local development" icon="laptop-code" href="/getting-started/local-development">
+    Run a full Ory stack locally using the Ory CLI tunnel or Docker Compose.
+  </Card>
+  <Card title="Migrate to Ory" icon="arrow-right-arrow-left" href="/getting-started/migrate-to-ory">
+    Step-by-step guide for migrating from another identity provider to Ory Network.
+  </Card>
+  <Card title="API Reference" icon="book" href="/reference/api-overview">
+    Full REST API reference for all Ory Network endpoints.
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/installation">
+    Install and use the Ory CLI to manage your project from the command line.
+  </Card>
+</CardGroup>

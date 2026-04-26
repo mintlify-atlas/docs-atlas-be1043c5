@@ -1,0 +1,357 @@
+---
+title: "Deploy Ory Keto self-hosted on your infrastructure"
+description: "Install and run Ory Keto on your own servers using Docker or a pre-built binary, apply database migrations, and configure the gRPC and REST APIs."
+keywords: ["ory keto", "self-hosted", "docker", "installation", "deployment", "database migration", "grpc", "rest api"]
+---
+
+Ory Keto is an open-source server you can run on your own infrastructure. This page walks you through installing Keto, setting up a database, running migrations, and starting the server with both its gRPC and REST APIs available.
+
+<Info>
+  If you are using Ory Network (the managed cloud service), you do not need to deploy Keto yourself. Self-hosting is for teams that need to run the permission server within their own environment.
+</Info>
+
+## Prerequisites
+
+Before you start, ensure you have:
+
+- A supported database: **PostgreSQL**, **MySQL**, or **CockroachDB**
+- Docker (for the Docker installation path) or a Linux/macOS/Windows host (for the binary path)
+- Network connectivity between your application and the Keto server
+
+<Warning>
+  SQLite is supported for development and testing only. Do not use SQLite in production. Use PostgreSQL, MySQL, or CockroachDB for any production deployment.
+</Warning>
+
+## Installation
+
+<Tabs>
+  <Tab title="Docker">
+    Pull the official Ory Keto image from Docker Hub:
+
+    ```bash
+    docker pull oryd/keto:v0.12.0
+    ```
+
+    Verify the image works:
+
+    ```bash
+    docker run --rm oryd/keto:v0.12.0 help
+    ```
+
+    Use `docker-compose` to run Keto alongside a database. Create a `docker-compose.yml`:
+
+    ```yaml
+    version: "3.7"
+    services:
+      keto-migrate:
+        image: oryd/keto:v0.12.0
+        environment:
+          - DSN=postgres://keto:secret@postgres:5432/keto?sslmode=disable
+        command: migrate up -y
+        depends_on:
+          - postgres
+        restart: on-failure
+
+      keto:
+        image: oryd/keto:v0.12.0
+        ports:
+          - "4466:4466"   # Read API (gRPC + REST)
+          - "4467:4467"   # Write API (gRPC + REST)
+        environment:
+          - DSN=postgres://keto:secret@postgres:5432/keto?sslmode=disable
+        command: serve
+        depends_on:
+          - keto-migrate
+
+      postgres:
+        image: postgres:14
+        environment:
+          - POSTGRES_USER=keto
+          - POSTGRES_PASSWORD=secret
+          - POSTGRES_DB=keto
+        ports:
+          - "5432:5432"
+    ```
+
+    Start the stack:
+
+    ```bash
+    docker-compose up
+    ```
+  </Tab>
+  <Tab title="Binary">
+    Download the latest Keto binary for your operating system from the [Ory Keto releases page](https://github.com/ory/keto/releases).
+
+    <Tabs>
+      <Tab title="Linux">
+        ```bash
+        # Download and install
+        bash <(curl https://raw.githubusercontent.com/ory/meta/master/install.sh) -b . keto
+        sudo mv ./keto /usr/local/bin/
+
+        # Verify
+        keto version
+        ```
+      </Tab>
+      <Tab title="macOS">
+        ```bash
+        brew install ory/tap/keto
+
+        # Verify
+        keto version
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab title="Go SDK">
+    Install the gRPC client library:
+
+    ```bash
+    go get github.com/ory/keto/proto
+    ```
+
+    Install the REST client library:
+
+    ```bash
+    go get github.com/ory/keto-client-go
+    ```
+  </Tab>
+</Tabs>
+
+## Configuration
+
+Create a configuration file `keto.yaml` to configure the database and server:
+
+```yaml
+dsn: postgres://keto:secret@localhost:5432/keto?sslmode=disable
+
+serve:
+  read:
+    host: 0.0.0.0
+    port: 4466
+  write:
+    host: 0.0.0.0
+    port: 4467
+
+namespaces: file:///path/to/your/permissions.ts
+
+log:
+  level: info
+  format: json
+```
+
+The `namespaces` field points to your OPL permission model file. You can use a file path or an inline configuration for simple setups.
+
+<Note>
+  Ory Keto watches the namespaces file for changes and reloads the permission model without a server restart.
+</Note>
+
+## Database migrations
+
+Before starting the server for the first time, run the database migrations to create the required schema:
+
+<Steps>
+  <Step title="Set the DSN environment variable">
+    Export your database connection string:
+
+    ```bash
+    export DSN=postgres://keto:secret@localhost:5432/keto?sslmode=disable
+    ```
+  </Step>
+  <Step title="Run the migration">
+    Apply all pending migrations:
+
+    ```bash
+    keto migrate up -y --config keto.yaml
+    ```
+
+    The `-y` flag automatically confirms the migration. Remove it to review the migration plan interactively.
+  </Step>
+  <Step title="Verify the migration">
+    Check the migration status:
+
+    ```bash
+    keto migrate status --config keto.yaml
+    ```
+
+    All migrations should show as applied.
+  </Step>
+</Steps>
+
+## Starting the server
+
+Start Keto with your configuration file:
+
+```bash
+keto serve --config keto.yaml
+```
+
+Keto starts two servers:
+
+| Server | Default port | Purpose |
+|--------|-------------|---------|
+| **Read API** | `4466` | Check permissions, list relationships, expand subject sets |
+| **Write API** | `4467` | Create, update, and delete relationships |
+
+Both servers expose a gRPC interface and a REST interface on the same port. The REST interface follows the OpenAPI specification and can be accessed with any HTTP client.
+
+<Tip>
+  Do not expose the Write API to the public internet. Your application backend should call the Write API from a trusted network. The Read API may also be sensitive depending on your use case, so protect it accordingly.
+</Tip>
+
+## Verifying the installation
+
+Once the server is running, verify it responds to requests:
+
+```bash
+# Check server health (REST)
+curl http://localhost:4466/health/ready
+
+# List all relationships (should return an empty list initially)
+curl http://localhost:4466/relation-tuples
+```
+
+Expected responses:
+
+```json
+{"status":"ok"}
+```
+
+```json
+{"relation_tuples":[],"next_page_token":""}
+```
+
+## Creating a relationship
+
+Use the Write API to create a test relationship:
+
+```bash
+curl -X PUT http://localhost:4467/admin/relation-tuples \
+  --header "Content-Type: application/json" \
+  --data '{
+    "namespace": "Document",
+    "object": "readme",
+    "relation": "owners",
+    "subject_id": "User:alice"
+  }'
+```
+
+## Checking a permission
+
+Use the Read API to verify the permission:
+
+```bash
+curl "http://localhost:4466/relation-tuples/check?namespace=Document&object=readme&relation=owners&subject_id=User:alice"
+```
+
+Expected response:
+
+```json
+{"allowed":true}
+```
+
+## Go SDK example
+
+The following example creates a relationship and checks a permission using the REST client:
+
+```go
+package main
+
+import (
+  "context"
+  "fmt"
+  "os"
+
+  ory "github.com/ory/keto-client-go"
+)
+
+var namespace = "Blog"
+var object    = "secret_post"
+var relation  = "view"
+var subjectId = "Bob"
+
+func main() {
+  payload := ory.CreateRelationshipBody{
+    Namespace: &namespace,
+    Object:    &object,
+    Relation:  &relation,
+    SubjectId: &subjectId,
+  }
+
+  writeCfg := ory.NewConfiguration()
+  writeCfg.Servers = []ory.ServerConfiguration{{URL: "http://127.0.0.1:4467"}}
+  writeClient := ory.NewAPIClient(writeCfg)
+
+  _, r, err := writeClient.RelationshipApi.
+    CreateRelationship(context.Background()).
+    CreateRelationshipBody(payload).
+    Execute()
+  if err != nil {
+    fmt.Fprintf(os.Stderr, "Full HTTP response: %v\n", r)
+    panic("Encountered error: " + err.Error())
+  }
+  fmt.Println("Successfully created relationship")
+
+  readCfg := ory.NewConfiguration()
+  readCfg.Servers = []ory.ServerConfiguration{{URL: "http://127.0.0.1:4466"}}
+  readClient := ory.NewAPIClient(readCfg)
+
+  check, _, err := readClient.PermissionApi.CheckPermission(context.Background()).
+    Namespace(namespace).
+    Object(object).
+    Relation(relation).
+    SubjectId(subjectId).
+    Execute()
+  if err != nil {
+    panic("Encountered error: " + err.Error())
+  }
+  if check.Allowed {
+    fmt.Printf("%s can %s the %s\n", subjectId, relation, object)
+  }
+}
+```
+
+## Production checklist
+
+Review these items before deploying to production:
+
+<Steps>
+  <Step title="Use a production database">
+    Configure PostgreSQL, MySQL, or CockroachDB. Set the `DSN` to a connection string with appropriate credentials and connection pool settings.
+  </Step>
+  <Step title="Set a pagination secret">
+    Generate and set `secrets.pagination` to a cryptographically secure value:
+
+    ```bash
+    openssl rand -base64 32
+    ```
+
+    Add the output to your `keto.yaml`:
+
+    ```yaml
+    secrets:
+      pagination:
+        - your-generated-secret-here
+    ```
+  </Step>
+  <Step title="Put Keto behind an API gateway">
+    Run Keto behind a reverse proxy or API gateway. Terminate TLS at the edge and use internal certificates for last-mile security. Do not expose Keto directly to the public internet.
+  </Step>
+  <Step title="Restrict Write API access">
+    Ensure the Write API (port `4467`) is only accessible from your trusted application backend. The Read API should also be protected according to your threat model.
+  </Step>
+  <Step title="Scale horizontally">
+    Keto is stateless with respect to the application layer — all state lives in the database. To scale, start additional Keto containers pointing to the same database. No additional configuration is required.
+  </Step>
+</Steps>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Define a permission model" icon="code" href="/keto/modeling">
+    Write your authorization rules using the Ory Permission Language with namespaces, relations, and permission functions.
+  </Card>
+  <Card title="Keto concepts overview" icon="book-open" href="/keto/overview">
+    Review the core concepts behind Ory Keto: namespaces, objects, subjects, relations, and permissions.
+  </Card>
+</CardGroup>

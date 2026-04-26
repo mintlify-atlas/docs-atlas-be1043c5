@@ -1,0 +1,397 @@
+---
+title: "Deploy and configure Ory Oathkeeper step by step"
+description: "How to deploy Oathkeeper with Docker, write a configuration file, define access rules, generate cryptographic keys, and set up Prometheus monitoring."
+keywords: ["oathkeeper", "deploy", "configure", "docker", "kubernetes", "access rules", "prometheus", "configuration"]
+---
+
+Ory Oathkeeper runs as a single binary that exposes two HTTP ports: a **reverse proxy** (default `4455`) and a **REST API** (default `4456`). The REST API serves the Access Control Decision API, health checks, JSON Web Key Sets, and the list of active rules.
+
+This guide walks through deploying Oathkeeper with Docker. For other installation methods (binary, Homebrew, Kubernetes Helm chart), see the installation documentation.
+
+<Info>
+Oathkeeper requires no database. All state lives in your configuration file and access rule repositories. This makes it easy to deploy in immutable container environments.
+</Info>
+
+## Create a configuration file
+
+Oathkeeper reads its configuration from a YAML file and from environment variables. Environment variable keys mirror the YAML path with dots replaced by underscores and an uppercase prefix (for example, `serve.proxy.port` becomes `SERVE_PROXY_PORT`).
+
+Start by creating a working directory and a `config.yaml` file:
+
+<Steps>
+  <Step title="Create the project directory">
+
+    ```bash
+    mkdir oathkeeper-demo
+    cd oathkeeper-demo
+    ```
+
+  </Step>
+  <Step title="Write config.yaml">
+
+    ```bash
+    cat << 'EOF' > config.yaml
+    serve:
+      proxy:
+        port: 4455
+      api:
+        port: 4456
+
+    access_rules:
+      repositories:
+        - file:///rules.json
+
+    errors:
+      fallback:
+        - json
+      handlers:
+        json:
+          enabled: true
+          config:
+            verbose: true
+        redirect:
+          enabled: true
+          config:
+            to: https://www.ory.com/docs
+
+    mutators:
+      header:
+        enabled: true
+        config:
+          headers:
+            X-User: "{{ print .Subject }}"
+      noop:
+        enabled: true
+      id_token:
+        enabled: true
+        config:
+          issuer_url: http://localhost:4455/
+          jwks_url: file:///jwks.json
+
+    authorizers:
+      allow:
+        enabled: true
+      deny:
+        enabled: true
+
+    authenticators:
+      anonymous:
+        enabled: true
+        config:
+          subject: guest
+    EOF
+    ```
+
+    This configuration:
+    - Runs the proxy on port `4455` and the API on port `4456`
+    - Loads access rules from `/rules.json` inside the container
+    - Enables the `anonymous` authenticator, `allow`/`deny` authorizers, and `noop`/`header`/`id_token` mutators
+    - Sets JSON as the default error response format, with redirect as an optional handler
+
+  </Step>
+</Steps>
+
+## Configure access rule repositories
+
+Oathkeeper loads access rules from one or more repository sources at startup. Supported URL schemes are:
+
+```yaml
+access_rules:
+  repositories:
+    - file://path/to/rules.json          # Local filesystem
+    - https://example.com/rules.json     # Remote HTTP(S)
+    - s3://my-bucket/rules.json          # AWS S3
+    - gs://my-bucket/rules.json          # Google Cloud Storage
+    - azblob://my-container/rules.json   # Azure Blob Storage
+    # Base64-encoded inline rules:
+    - inline://W3siaWQiOiJmb28tcnVsZSJ9XQ==
+  matching_strategy: glob  # or regexp (default)
+```
+
+<Tip>
+Use `matching_strategy: glob` for simple wildcard patterns like `https://example.com/<{api,admin}/**>`. Use `regexp` when you need capture groups for template substitution in handlers.
+</Tip>
+
+## Define access rules
+
+Create `rules.json` with three example rules that demonstrate the main handler combinations:
+
+```bash
+cat << 'EOF' > rules.json
+[
+  {
+    "id": "allow-anonymous-with-header-mutator",
+    "upstream": {
+      "url": "https://httpbin.org/anything/header"
+    },
+    "match": {
+      "url": "http://<127.0.0.1|localhost>:4455/anything/header",
+      "methods": ["GET"]
+    },
+    "authenticators": [{ "handler": "anonymous" }],
+    "authorizer": { "handler": "allow" },
+    "mutators": [{
+      "handler": "header",
+      "config": { "headers": { "X-User": "{{ print .Subject }}" } }
+    }]
+  },
+  {
+    "id": "deny-anonymous",
+    "upstream": {
+      "url": "https://httpbin.org/anything/deny"
+    },
+    "match": {
+      "url": "http://<127.0.0.1|localhost>:4455/anything/deny",
+      "methods": ["GET"]
+    },
+    "authenticators": [{ "handler": "anonymous" }],
+    "authorizer": { "handler": "deny" },
+    "mutators": [{ "handler": "noop" }],
+    "errors": [
+      {
+        "handler": "json",
+        "config": {
+          "when": [{ "request": { "header": { "accept": ["application/json"] } } }]
+        }
+      },
+      {
+        "handler": "redirect",
+        "config": {
+          "when": [{ "request": { "header": { "accept": ["text/*"] } } }]
+        }
+      }
+    ]
+  },
+  {
+    "id": "allow-anonymous-with-id-token-mutator",
+    "upstream": {
+      "url": "https://httpbin.org/anything/id_token"
+    },
+    "match": {
+      "url": "http://<127.0.0.1|localhost>:4455/anything/id_token",
+      "methods": ["GET"]
+    },
+    "authenticators": [{ "handler": "anonymous" }],
+    "authorizer": { "handler": "allow" },
+    "mutators": [{ "handler": "id_token" }]
+  }
+]
+EOF
+```
+
+The three rules demonstrate:
+1. **Header mutator** — Forwards the subject as an `X-User` header to the upstream.
+2. **Deny with per-client error handling** — Returns JSON to API clients and a redirect to browser clients.
+3. **ID Token mutator** — Generates a signed JWT and forwards it as `Authorization: Bearer <token>`.
+
+## Generate cryptographic keys
+
+The `id_token` mutator requires a private key to sign JWTs. Oathkeeper can generate one for you:
+
+```bash
+docker run oryd/oathkeeper:latest credentials generate --alg RS256 > jwks.json
+```
+
+<Note>
+All standard JWT algorithms are supported: RS256, RS512, ES256, ES512, HS256, and others. The public key for the asymmetric algorithms is automatically published at `/.well-known/jwks.json` on the API port so upstream services can verify tokens without out-of-band key distribution.
+</Note>
+
+In production, store the JWKS file as a Kubernetes Secret or in a secrets manager and mount it into the container at runtime rather than baking it into the image.
+
+## Build and run with Docker
+
+Create a `Dockerfile` that bundles the configuration into a custom image:
+
+```bash
+cat << 'EOF' > Dockerfile
+FROM oryd/oathkeeper:latest
+ADD config.yaml /config.yaml
+ADD rules.json /rules.json
+ADD jwks.json /jwks.json
+EOF
+```
+
+<Warning>
+This approach is suitable for demos only. In production, separate config files from the container image. Use Kubernetes ConfigMaps for `config.yaml` and `rules.json`, and a Kubernetes Secret for `jwks.json`.
+</Warning>
+
+Build and run:
+
+<Steps>
+  <Step title="Pull the latest image">
+
+    ```bash
+    docker pull oryd/oathkeeper:latest
+    ```
+
+  </Step>
+  <Step title="Build the demo image">
+
+    ```bash
+    docker build -t ory-oathkeeper-demo .
+    ```
+
+  </Step>
+  <Step title="Start the container">
+
+    ```bash
+    docker run --rm \
+      --name ory-oathkeeper-demo \
+      -p 4455:4455 \
+      -p 4456:4456 \
+      ory-oathkeeper-demo \
+      --config /config.yaml \
+      serve
+    ```
+
+  </Step>
+  <Step title="Verify it is running">
+
+    ```bash
+    curl http://127.0.0.1:4456/health/alive
+    # {"status":"ok"}
+
+    curl http://127.0.0.1:4456/health/ready
+    # {"status":"ok"}
+
+    curl http://127.0.0.1:4456/rules
+    # Returns the list of loaded access rules
+    ```
+
+  </Step>
+</Steps>
+
+## Test the access rules
+
+With the container running, test each of the three rules:
+
+```bash
+# Rule 1: anonymous request — upstream receives X-User: guest
+curl -X GET http://127.0.0.1:4455/anything/header
+# Response includes: "X-User": "guest"
+
+# Rule 2a: deny — JSON error for API clients
+curl -H "Accept: application/json" -X GET http://127.0.0.1:4455/anything/deny
+# {"error":{"code":403,"status":"Forbidden","message":"Access credentials aren't sufficient..."}}
+
+# Rule 2b: deny — redirect for browser clients
+curl -H "Accept: text/html" -X GET http://127.0.0.1:4455/anything/deny
+# <a href="https://www.ory.com/docs">Found</a>.
+
+# Rule 3: anonymous request — upstream receives a signed JWT
+curl -X GET http://127.0.0.1:4455/anything/id_token
+# Response includes: "Authorization": "Bearer eyJ..."
+```
+
+## Kubernetes deployment
+
+For production Kubernetes deployments, the Ory Helm charts apply best practices for secrets management, ConfigMaps, health checks, and scaling:
+
+```bash
+helm repo add ory https://k8s.ory.sh/helm/charts
+helm repo update
+helm install oathkeeper ory/oathkeeper \
+  --set 'oathkeeper.config.serve.proxy.port=4455' \
+  --set 'oathkeeper.config.serve.api.port=4456'
+```
+
+The Helm chart separates configuration from the container image and mounts credentials as Kubernetes Secrets.
+
+## Configuration reference
+
+The key sections of `config.yaml` and their purposes:
+
+| Section | Description |
+|---|---|
+| `serve.proxy` | Port, CORS, and TLS settings for the reverse proxy. |
+| `serve.api` | Port, CORS, and TLS settings for the Decision API. |
+| `serve.prometheus` | Port and path for Prometheus metrics scraping. |
+| `access_rules.repositories` | List of URLs from which to load access rule files. |
+| `access_rules.matching_strategy` | URL matching strategy: `regexp` or `glob`. |
+| `authenticators.*` | Enable and configure each authenticator handler. |
+| `authorizers.*` | Enable and configure each authorizer handler. |
+| `mutators.*` | Enable and configure each mutator handler. |
+| `errors.fallback` | Default error handler(s) when no per-rule handler matches. |
+| `errors.handlers.*` | Enable and configure each error handler. |
+
+## Monitoring with Prometheus
+
+Oathkeeper exposes a Prometheus metrics endpoint. Configure the port and path in `config.yaml`:
+
+```yaml
+serve:
+  prometheus:
+    port: 9000
+    host: localhost
+    metrics_path: /metrics
+```
+
+Set up a Prometheus scrape config to collect these metrics:
+
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: oathkeeper
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['localhost:9000']
+```
+
+Run Prometheus alongside Oathkeeper:
+
+```bash
+docker run \
+  --name prometheus \
+  -d \
+  --net=host \
+  -p 9090:9090 \
+  -v ./prometheus.yml:/etc/prometheus/prometheus.yml \
+  prom/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml
+```
+
+Access the Prometheus UI at `http://localhost:9090`. For visualization, connect a Grafana instance and import the [Oathkeeper Grafana dashboard](https://github.com/ory/oathkeeper/tree/master/contrib/grafana/Oathkeeper-Dashboard.json) from the Oathkeeper repository.
+
+## Integration with Ory Kratos and Ory Hydra
+
+**With Ory Kratos (session-based authentication):**
+
+Enable the `cookie_session` authenticator and point it at Kratos's session check endpoint:
+
+```yaml
+authenticators:
+  cookie_session:
+    enabled: true
+    config:
+      check_session_url: http://kratos:4433/sessions/whoami
+      only:
+        - ory_kratos_session
+```
+
+**With Ory Hydra (OAuth 2.0 token introspection):**
+
+Enable the `oauth2_introspection` authenticator and point it at Hydra's introspection endpoint:
+
+```yaml
+authenticators:
+  oauth2_introspection:
+    enabled: true
+    config:
+      introspection_url: http://hydra:4445/oauth2/introspect
+      scope_strategy: exact
+      cache:
+        enabled: true
+        ttl: 30s
+```
+
+## Clean up the demo
+
+```bash
+docker rm -f ory-oathkeeper-demo
+docker rmi -f ory-oathkeeper-demo
+rm -rf oathkeeper-demo
+```

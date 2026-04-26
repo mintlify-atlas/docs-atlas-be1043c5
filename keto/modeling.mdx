@@ -1,0 +1,405 @@
+---
+title: "Defining permission models with Ory Permission Language"
+description: "Use the TypeScript-based Ory Permission Language to define namespaces, relations, and permission functions that govern access control in your application."
+keywords: ["ory permission language", "opl", "permission model", "namespaces", "relations", "typescript", "keto"]
+---
+
+The Ory Permission Language (OPL) is the configuration language you use to tell Ory Keto how to evaluate permission checks. It is defined as a strict subset of [TypeScript](https://www.typescriptlang.org/), which means it has familiar syntax, works with standard TypeScript tooling, and does not require learning a proprietary language like Rego or Casbin.
+
+A permission model written in OPL answers one question: given a stored set of relationships, how should Ory Keto decide whether a subject has a specific permission on an object? The model separates *rules* (OPL code) from *facts* (relationship data stored at runtime). You can update rules without migrating relationship data, and you can update relationship data without redeploying your permission model.
+
+## OPL structure
+
+Every OPL file imports the base types and defines one or more namespace classes.
+
+```typescript
+import { Namespace, Context } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+
+class Document implements Namespace {
+  related: {
+    owners: User[]
+    editors: User[]
+    viewers: User[]
+  }
+
+  permits = {
+    read:  (ctx: Context): boolean => this.related.viewers.includes(ctx.subject) || this.permits.write(ctx),
+    write: (ctx: Context): boolean => this.related.editors.includes(ctx.subject) || this.permits.share(ctx),
+    share: (ctx: Context): boolean => this.related.owners.includes(ctx.subject),
+  }
+}
+```
+
+The three building blocks are:
+
+- **Namespace classes** — declare the resource types in your system.
+- **`related` property** — declares the relation names and the types each relation connects.
+- **`permits` property** — declares the permission functions that evaluate to `true` or `false`.
+
+## Namespace definitions
+
+Declare a namespace by creating a class that implements `Namespace`. Namespaces represent distinct resource types, not individual resources. Use upper camel case, singular form.
+
+```typescript
+import { Namespace } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+class Group implements Namespace {}
+class Document implements Namespace {}
+class Folder implements Namespace {}
+```
+
+A namespace with no `related` or `permits` properties (like `User` above) can still be used as a subject type referenced by other namespaces.
+
+## Relation definitions
+
+Declare relations inside the `related` property. Each key is a relation name; the value type is an array of the namespace types that can appear as subjects for that relation.
+
+```typescript
+class Document implements Namespace {
+  related: {
+    owners: User[]                             // individual users
+    editors: User[]
+    viewers: User[]
+    parents: Folder[]                          // another namespace type
+  }
+}
+```
+
+Relations form many-to-many edges in the relationship graph. Use plural names — `owners`, not `owner` — because multiple subjects can hold the same relation on a single object.
+
+### Subject sets in relations
+
+A subject set refers to all subjects that hold a particular relation on another object. Use this to model group membership or role inheritance:
+
+```typescript
+import { Namespace, SubjectSet, Context } from "@ory/keto-namespace-types"
+
+class Group implements Namespace {
+  related: {
+    members: User[]
+  }
+}
+
+class Document implements Namespace {
+  related: {
+    // Accept individual users OR all members of a group
+    viewers: (User | SubjectSet<Group, "members">)[]
+  }
+}
+```
+
+When a check request arrives for `Document:X#viewers@User:Alice`, Ory Keto evaluates both direct user relationships and any subject set relationships — for example, `Group:readers#members` — to determine if Alice is in `viewers` through group membership.
+
+## Permission definitions
+
+Define permissions in the `permits` property as functions that take a `Context` and return `boolean`. The context provides `ctx.subject`, which is the subject being checked.
+
+### Checking direct relations
+
+```typescript
+permits = {
+  view: (ctx: Context): boolean =>
+    this.related.viewers.includes(ctx.subject),
+}
+```
+
+This returns `true` if a `viewers` relationship exists for the requesting subject.
+
+### Combining relations with logical operators
+
+```typescript
+permits = {
+  view: (ctx: Context): boolean =>
+    this.related.viewers.includes(ctx.subject) ||
+    this.related.editors.includes(ctx.subject) ||
+    this.related.owners.includes(ctx.subject),
+}
+```
+
+### Composing permissions
+
+A permission function can call other permission functions on `this.permits`. This lets you express inheritance without duplicating relation checks:
+
+```typescript
+permits = {
+  share:  (ctx: Context): boolean => this.related.owners.includes(ctx.subject),
+  edit:   (ctx: Context): boolean => this.related.editors.includes(ctx.subject) || this.permits.share(ctx),
+  view:   (ctx: Context): boolean => this.related.viewers.includes(ctx.subject) || this.permits.edit(ctx),
+}
+```
+
+A user who can `share` automatically passes the `edit` and `view` checks. A user who can `edit` automatically passes the `view` check.
+
+### Traversing parent relationships
+
+Use `traverse` to follow relation edges to another namespace and evaluate a permission there:
+
+```typescript
+class Folder implements Namespace {
+  related: {
+    owners: User[]
+    parents: Folder[]
+  }
+
+  permits = {
+    view: (ctx: Context): boolean =>
+      this.related.owners.includes(ctx.subject) ||
+      this.related.parents.traverse((parent) => parent.permits.view(ctx)),
+  }
+}
+
+class Document implements Namespace {
+  related: {
+    owners: User[]
+    parents: Folder[]
+  }
+
+  permits = {
+    view: (ctx: Context): boolean =>
+      this.related.owners.includes(ctx.subject) ||
+      this.related.parents.traverse((parent) => parent.permits.view(ctx)),
+  }
+}
+```
+
+If a user can view a parent folder, they can view all documents and subfolders it contains. The `traverse` call walks the `parents` relation and evaluates the given permission function on each parent node.
+
+## Worked example: document store
+
+This full example models a document store where users can be owners, editors, or viewers of documents, documents live in folders, and access propagates through folder hierarchies.
+
+### Step 1: identify namespaces
+
+From the requirements, identify the subject and object types:
+
+- **User** — the people who access resources
+- **Document** — the primary resource
+- **Folder** — containers that organize documents
+
+```typescript title="permissions-v1.ts"
+import { Namespace, Context } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+class Document implements Namespace {}
+class Folder implements Namespace {}
+```
+
+### Step 2: define relations
+
+Each document has owners, editors, viewers, and a parent folder. Each folder has the same role relations plus parent folders for hierarchy.
+
+```typescript title="permissions-v2.ts"
+import { Namespace, Context } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+
+class Document implements Namespace {
+  related: {
+    owners:  User[]
+    editors: User[]
+    viewers: User[]
+    parents: Folder[]
+  }
+}
+
+class Folder implements Namespace {
+  related: {
+    owners:  User[]
+    editors: User[]
+    viewers: User[]
+    parents: Folder[]
+  }
+}
+```
+
+### Step 3: define permissions
+
+Add permission functions that express the access rules:
+
+- `view` — viewers, editors, owners, or anyone who can view the parent
+- `edit` — editors, owners, or anyone who can edit the parent
+- `delete` and `share` — owners only, or anyone with those permissions on the parent
+
+```typescript title="permissions-v3.ts"
+import { Namespace, Context } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+
+class Document implements Namespace {
+  related: {
+    owners:  User[]
+    editors: User[]
+    viewers: User[]
+    parents: Folder[]
+  }
+
+  permits = {
+    view: (ctx: Context): boolean =>
+      this.related.viewers.includes(ctx.subject) ||
+      this.related.editors.includes(ctx.subject) ||
+      this.related.owners.includes(ctx.subject) ||
+      this.related.parents.traverse((parent) => parent.permits.view(ctx)),
+    edit: (ctx: Context): boolean =>
+      this.related.editors.includes(ctx.subject) ||
+      this.related.owners.includes(ctx.subject) ||
+      this.related.parents.traverse((parent) => parent.permits.edit(ctx)),
+    delete: (ctx: Context): boolean =>
+      this.related.owners.includes(ctx.subject) ||
+      this.related.parents.traverse((parent) => parent.permits.delete(ctx)),
+    share: (ctx: Context): boolean =>
+      this.related.owners.includes(ctx.subject) ||
+      this.related.parents.traverse((parent) => parent.permits.share(ctx)),
+  }
+}
+
+class Folder implements Namespace {
+  related: {
+    owners:  User[]
+    editors: User[]
+    viewers: User[]
+    parents: Folder[]
+  }
+
+  permits = {
+    delete: (ctx: Context): boolean =>
+      this.related.owners.includes(ctx.subject) ||
+      this.related.parents.traverse((parent) => parent.permits.delete(ctx)),
+    share: (ctx: Context): boolean =>
+      this.related.owners.includes(ctx.subject) ||
+      this.related.parents.traverse((parent) => parent.permits.share(ctx)),
+  }
+}
+```
+
+### Optional: refactor using permission composition
+
+Because every `edit` check implies `view`, and every `share` check implies `edit`, you can simplify by composing permissions:
+
+```typescript title="permissions-v4.ts"
+import { Namespace, Context } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+
+class Document implements Namespace {
+  related: {
+    owners:  User[]
+    editors: User[]
+    viewers: User[]
+    parents: Folder[]
+  }
+
+  permits = {
+    share: (ctx: Context): boolean =>
+      this.related.owners.includes(ctx.subject) ||
+      this.related.parents.traverse((parent) => parent.permits.share(ctx)),
+    edit: (ctx: Context): boolean =>
+      this.related.editors.includes(ctx.subject) ||
+      this.permits.share(ctx),
+    delete: (ctx: Context): boolean =>
+      this.permits.share(ctx),
+    view: (ctx: Context): boolean =>
+      this.related.viewers.includes(ctx.subject) ||
+      this.permits.edit(ctx),
+  }
+}
+
+class Folder implements Namespace {
+  related: {
+    owners:  User[]
+    editors: User[]
+    viewers: User[]
+    parents: Folder[]
+  }
+
+  permits = {
+    share: (ctx: Context): boolean =>
+      this.related.owners.includes(ctx.subject) ||
+      this.related.parents.traverse((parent) => parent.permits.share(ctx)),
+    delete: (ctx: Context): boolean =>
+      this.permits.share(ctx),
+  }
+}
+```
+
+<Tip>
+  Whether this refactoring is appropriate depends on your requirements. If `edit` and `view` ever need to diverge, keep the permission functions separate.
+</Tip>
+
+## RBAC example
+
+Role-based access control maps users to roles using group membership, then grants permissions to all members of a role.
+
+```typescript
+import { Namespace, SubjectSet, Context } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+
+class Group implements Namespace {
+  related: {
+    members: User[]
+  }
+}
+
+class Report implements Namespace {
+  related: {
+    viewers: (User | SubjectSet<Group, "members">)[]
+    editors: (User | SubjectSet<Group, "members">)[]
+  }
+
+  permits = {
+    view: (ctx: Context): boolean =>
+      this.related.viewers.includes(ctx.subject),
+    edit: (ctx: Context): boolean =>
+      this.related.editors.includes(ctx.subject),
+  }
+}
+```
+
+To grant the `finance` group view access to a report, create two relationships:
+
+```
+Report:finance-q1#viewers@Group:finance#members
+Group:finance#members@User:Lila
+```
+
+Lila now passes the `view` check on `Report:finance-q1` through her group membership. Adding more users to `Group:finance` automatically extends the permission without modifying the report relationships.
+
+## Naming conventions
+
+Follow these conventions for readable, consistent OPL code.
+
+| Concept | Convention | Example |
+|---------|-----------|---------|
+| Namespace name | Upper camel case, singular | `Document`, `AccessKey` |
+| Relation name | Plural noun | `owners`, `members`, `parents` |
+| Permission name | Verb or verb phrase | `view`, `edit`, `share`, `delete` |
+
+<Warning>
+  Avoid encoding application data in object or subject identifiers. Use UUIDs as opaque keys and store metadata in your application's database. The characters `:`, `#`, and `@` are reserved and cannot appear in identifiers.
+</Warning>
+
+## Testing your permission model
+
+After defining a permission model, verify it by creating relationships and running check requests through the API or SDK.
+
+<Steps>
+  <Step title="Write test relationships">
+    Use the Write API to create relationships that represent your test scenarios. For example, assign a user as an owner of a document.
+  </Step>
+  <Step title="Run check requests">
+    Call the Check API with combinations of subjects, permissions, and objects. Confirm that `allowed` and `denied` responses match your expectations.
+  </Step>
+  <Step title="Test negative cases">
+    Explicitly verify that users who should *not* have access receive `denied`. Positive tests alone are not sufficient.
+  </Step>
+  <Step title="Automate with the SDK">
+    Write automated tests using the [Ory Keto SDK](https://github.com/ory/keto-client-go) in your preferred language. Run these tests in CI before deploying permission model changes.
+  </Step>
+</Steps>
+
+<Tip>
+  For complex permission model changes, test on a separate Ory Network project with an isolated permission model before promoting changes to production.
+</Tip>

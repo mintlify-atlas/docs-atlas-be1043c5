@@ -1,0 +1,202 @@
+---
+title: "Ory Keto: relationship-based access control"
+description: "Ory Keto is a Zanzibar-inspired permission server using namespaces, objects, subjects, and relations to power flexible, fine-grained access control."
+keywords: ["ory keto", "access control", "zanzibar", "rbac", "permissions", "relationships", "namespaces"]
+---
+
+Ory Keto is an open-source permission server based on the design principles of [Google's Zanzibar paper](https://research.google/pubs/pub48190/), the authorization system that powers Google Drive, YouTube, and other large-scale Google products. Unlike traditional role-based access control systems with rigid, predefined permission sets, Ory Keto lets you model any authorization structure — from simple role assignments to complex hierarchical sharing rules — using a flexible, graph-based data model.
+
+You write your permission rules using the Ory Permission Language (OPL), a TypeScript-based configuration language that serves as the single source of truth for access rights across all of your applications. Ory Keto then evaluates those rules against relationship data at query time, returning a simple allow/deny decision that your application enforces.
+
+## Core concepts
+
+Ory Keto represents all authorization state as a graph of **relationships**. Each relationship connects a subject to an object through a named relation. A permission check traverses this graph according to the rules you define in your permission model.
+
+### Namespaces
+
+A namespace is a typed category of resource in your system. You define namespaces as TypeScript classes in OPL:
+
+```typescript
+import { Namespace, Context } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+class Document implements Namespace {}
+class Folder implements Namespace {}
+```
+
+Namespaces serve two purposes: they scope objects and subjects so that IDs from different resource types never collide, and they contain the relation and permission definitions that govern how checks are evaluated for that resource type.
+
+Namespace names should use upper camel case and the singular form — `Document`, not `documents`.
+
+### Objects
+
+An object is the identifier of a specific resource within a namespace. Ory Keto places no semantic meaning on object identifiers; they are arbitrary strings your application assigns. Using UUIDs is strongly recommended because they are globally unique and do not embed application data.
+
+```
+Document:ec788a82-a12e-45a4-b906-3e69f78c94e4
+Folder:803a87e9-0da0-486e-bc08-ef559dd8e034
+```
+
+Object identifiers may not contain the characters `:`, `#`, or `@`. The maximum identifier length is 64 characters.
+
+### Subjects
+
+A subject is the entity whose access you are checking — typically a user. Subjects are identified by a string, and Ory Keto treats two subjects as equal when their string representations are equal.
+
+Ory Keto also supports **subject sets**, which represent all subjects that hold a specific relation on an object. Subject sets let you express group membership and role inheritance without duplicating relationships. For example, `Group:admins#members` refers to every user who is a member of the `admins` group.
+
+### Relations
+
+A relation is a named edge between an object and a subject (or subject set). Relations are declared inside their namespace's `related` property:
+
+```typescript
+class Document implements Namespace {
+  related: {
+    owners: User[]
+    editors: User[]
+    viewers: User[]
+    parents: Folder[]
+  }
+}
+```
+
+Relation names should use the plural form and read naturally in the sentence: `<Subject> is in <relation> of <Object>`.
+
+### Permissions
+
+Permissions are boolean functions defined in the `permits` property of a namespace. They describe *what a subject may do* based on the relationships that exist:
+
+```typescript
+permits = {
+  read: (ctx: Context): boolean =>
+    this.related.viewers.includes(ctx.subject) ||
+    this.related.editors.includes(ctx.subject) ||
+    this.related.owners.includes(ctx.subject),
+  write: (ctx: Context): boolean =>
+    this.related.editors.includes(ctx.subject) ||
+    this.related.owners.includes(ctx.subject),
+}
+```
+
+When you call the check API, Ory Keto evaluates the relevant permission function against the stored relationships and returns `allowed` or `denied`.
+
+## How Ory Keto differs from traditional ACLs
+
+Traditional ACL systems store permission records directly — for example, "User A may read File X". This works at small scale, but breaks down when you need to express rules like "everyone in the `editors` group may write to any document in the `engineering` folder, unless the document is locked".
+
+Ory Keto separates **facts** (relationships, stored in a database) from **rules** (permissions, defined in OPL). When a check request arrives:
+
+1. Ory Keto reads the relevant permission function from your OPL configuration.
+2. It traverses the relationship graph to evaluate whether the function returns `true` for the requesting subject.
+3. It returns `allowed` or `denied` — no application logic required.
+
+This separation means you can change authorization rules without migrating relationship data, and you can audit permissions by inspecting the graph at any point.
+
+<Note>
+  Ory Keto does not authenticate users. It only evaluates permissions. Use [Ory Kratos](/kratos/quickstart) or another identity provider to authenticate subjects before passing them to Keto's check API.
+</Note>
+
+## Use cases
+
+<Tabs>
+  <Tab title="Role-based access control">
+    Map users to roles using group membership relationships, then define permissions that check role membership through subject sets.
+
+    ```typescript
+    class Group implements Namespace {
+      related: {
+        members: User[]
+      }
+    }
+
+    class Report implements Namespace {
+      related: {
+        viewers: (User | SubjectSet<Group, "members">)[]
+        editors: (User | SubjectSet<Group, "members">)[]
+      }
+
+      permits = {
+        view: (ctx: Context): boolean =>
+          this.related.viewers.includes(ctx.subject),
+        edit: (ctx: Context): boolean =>
+          this.related.editors.includes(ctx.subject),
+      }
+    }
+    ```
+
+    Assigning a user to a group automatically grants them all permissions that the group holds, without touching individual permission records.
+  </Tab>
+  <Tab title="File sharing">
+    Model per-file ownership and sharing with direct relationships and inherited access through ownership chains.
+
+    ```typescript
+    class File implements Namespace {
+      related: {
+        owners: User[]
+        viewers: User[]
+      }
+
+      permits = {
+        view: (ctx: Context): boolean =>
+          this.related.viewers.includes(ctx.subject) ||
+          this.related.owners.includes(ctx.subject),
+        share: (ctx: Context): boolean =>
+          this.related.owners.includes(ctx.subject),
+      }
+    }
+    ```
+
+    When Bob uploads a file, the application writes `File:xyz#owners@User:Bob`. When Bob shares with Alice, it writes `File:xyz#viewers@User:Alice`. The check API handles all access decisions.
+  </Tab>
+  <Tab title="Multi-tenant permissions">
+    Scope resources to tenants using namespace hierarchies. Users can hold different roles in different tenants without any cross-tenant data leakage.
+
+    ```typescript
+    class Organization implements Namespace {
+      related: {
+        admins: User[]
+        members: User[]
+      }
+    }
+
+    class Project implements Namespace {
+      related: {
+        owners: User[]
+        parent: Organization[]
+      }
+
+      permits = {
+        manage: (ctx: Context): boolean =>
+          this.related.owners.includes(ctx.subject) ||
+          this.related.parent.traverse((org) => org.related.admins.includes(ctx.subject)),
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## APIs
+
+Ory Keto exposes both gRPC and REST APIs. All APIs are available on both transports, though feature parity is not guaranteed.
+
+| API | Purpose |
+|-----|---------|
+| **Check** | Ask whether a subject has a permission on an object. Returns `allowed` or `denied`. |
+| **List relationships** | Query relationships by partial match to list objects a user can access or users who hold a role. |
+| **Expand subject sets** | Recursively expand a subject set into a tree of subjects to audit who has access to a resource. |
+| **Write relationships** | Create, update, or delete relationships in bulk using transactions. |
+
+<Tip>
+  Use the Write API's transaction-based methods rather than issuing many small individual writes. A single transaction handles bulk updates faster and provides stronger consistency guarantees.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Define a permission model" icon="code" href="/keto/modeling">
+    Learn how to write permission models in the Ory Permission Language with namespaces, relations, and permission functions.
+  </Card>
+  <Card title="Deploy Ory Keto self-hosted" icon="server" href="/keto/self-hosted">
+    Run Ory Keto on your own infrastructure using Docker or a binary, with database migrations and API configuration.
+  </Card>
+</CardGroup>

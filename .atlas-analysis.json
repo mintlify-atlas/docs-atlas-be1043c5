@@ -1,28 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "Ory",
+  "projectType": "saas",
+  "projectName": "Ory",
+  "projectDescription": "Ory is a cloud-native identity and access management platform offering authentication, authorization, OAuth2/OIDC, and zero-trust networking as open-source software and a managed cloud service.",
   "theme": "luma",
-  "colors": {
-    "primary": "#0c142c",
-    "light": "#5344e3",
-    "dark": "#a49cda"
-  },
-  "favicon": "https://media.brand.dev/d208ed3f-3152-4a7c-9d40-a74270a7c91a.jpg",
-  "logo": {
-    "light": "https://media.brand.dev/fb74f571-f1af-4f59-a663-ca20fd4a1fe9.svg",
-    "dark": "https://media.brand.dev/fb74f571-f1af-4f59-a663-ca20fd4a1fe9.svg"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/ory/docs"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/ory/docs"
-    }
-  },
+  "primaryColor": "#0c142c",
+  "lightColor": "#5344e3",
+  "darkColor": "#a49cda",
   "navigation": {
     "tabs": [
       {
@@ -143,5 +126,29 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Identity management with login, registration, MFA, passwordless, and social sign-in flows",
+    "OAuth2 and OpenID Connect provider with 15+ IETF and OpenID standards support",
+    "Relationship-based fine-grained access control (Zanzibar-inspired permissions)",
+    "Zero-trust identity and access proxy (Oathkeeper)",
+    "SAML enterprise SSO integration via Ory Polis",
+    "Headless APIs with bring-your-own-UI support",
+    "Fully open-source core under Apache 2.0 license",
+    "Ory Network: planet-scale managed cloud service"
+  ],
+  "publicApiSurface": [
+    "GET /identities — list identities",
+    "POST /identities — create identity",
+    "GET /sessions/whoami — check active session",
+    "POST /self-service/login — initiate login flow",
+    "POST /self-service/registration — initiate registration flow",
+    "GET /oauth2/auth — OAuth2 authorization endpoint",
+    "POST /oauth2/token — OAuth2 token endpoint",
+    "GET /userinfo — OpenID Connect userinfo endpoint",
+    "POST /relation-tuples — create permission relation",
+    "GET /relation-tuples/check — check permission",
+    "GET /.well-known/openid-configuration — OIDC discovery endpoint",
+    "POST /admin/oauth2/clients — create OAuth2 client"
+  ]
 }

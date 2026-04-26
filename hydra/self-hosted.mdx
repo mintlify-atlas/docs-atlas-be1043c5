@@ -1,0 +1,377 @@
+---
+title: "Self-hosting Ory Hydra: installation and deployment"
+description: "Deploy Ory Hydra on your own infrastructure using Docker or a binary, configure PostgreSQL or MySQL, enable TLS, and harden your setup for production."
+keywords: ["ory hydra self-hosted", "docker oauth2 server", "hydra installation", "hydra database setup", "hydra production"]
+---
+
+Ory Hydra is available as a Docker image and as a standalone binary for Linux, macOS, and Windows. This guide walks you through getting Hydra running, connecting it to a database, and hardening the configuration for production use.
+
+## Installation
+
+<Tabs>
+  <Tab title="Docker">
+    Pull the latest Ory Hydra image from Docker Hub:
+
+    ```bash
+    docker pull oryd/hydra:latest
+    ```
+
+    Verify the installation:
+
+    ```bash
+    docker run --rm oryd/hydra:latest version
+    ```
+  </Tab>
+  <Tab title="Binary (Linux/macOS)">
+    Download and install the Hydra binary using the Ory installer:
+
+    ```bash
+    bash <(curl https://raw.githubusercontent.com/ory/meta/master/install.sh) -b /usr/local/bin hydra
+    ```
+
+    Verify the installation:
+
+    ```bash
+    hydra version
+    ```
+  </Tab>
+  <Tab title="Homebrew (macOS)">
+    ```bash
+    brew install ory/tap/hydra
+    ```
+  </Tab>
+</Tabs>
+
+## Database setup
+
+Ory Hydra requires a persistent database to store OAuth2 clients, access tokens, refresh tokens, and consent sessions.
+
+### Supported databases
+
+| Database | Version | Notes |
+|---|---|---|
+| PostgreSQL | 12.0+ | Recommended for production |
+| MySQL | 8.0+ | Older versions have known schema issues |
+| CockroachDB | Any | Supported |
+| SQLite | Any | For development only |
+
+### Configure the connection
+
+Set the `DSN` environment variable or the `dsn` key in your configuration file.
+
+<CodeGroup>
+
+```bash PostgreSQL
+export DSN="postgres://hydra:secret@localhost:5432/hydra?sslmode=disable"
+```
+
+```bash MySQL
+export DSN="mysql://hydra:secret@tcp(localhost:3306)/hydra?parseTime=true"
+```
+
+```bash CockroachDB
+export DSN="cockroach://hydra:secret@localhost:26257/hydra?sslmode=verify-full"
+```
+
+```bash SQLite (dev only)
+export DSN="sqlite:///var/lib/hydra/hydra.sqlite?_fk=true"
+```
+
+</CodeGroup>
+
+<Warning>
+SQLite does not support concurrent writes and is not suitable for production deployments or any setup with more than one Hydra instance.
+</Warning>
+
+### Run migrations
+
+Hydra does not create the database schema automatically. You must run migrations before starting the server for the first time and after every upgrade.
+
+```bash
+hydra migrate sql --yes -e
+```
+
+The `-e` flag reads the DSN from the `DSN` environment variable. The `--yes` flag skips the confirmation prompt.
+
+For Docker:
+
+```bash
+docker run --rm \
+  -e DSN="postgres://hydra:secret@db:5432/hydra?sslmode=disable" \
+  oryd/hydra:latest \
+  migrate sql --yes -e
+```
+
+<Note>
+Always back up your database before running migrations.
+</Note>
+
+---
+
+## Quickstart with Docker Compose
+
+The fastest way to run Hydra locally with a real database is with Docker Compose.
+
+<Steps>
+  <Step title="Clone the Hydra repository">
+    ```bash
+    git clone https://github.com/ory/hydra.git
+    cd hydra
+    ```
+  </Step>
+  <Step title="Start Hydra with PostgreSQL">
+    ```bash
+    docker compose -f quickstart.yml \
+      -f quickstart-postgres.yml \
+      up
+    ```
+
+    This starts a PostgreSQL container and a Hydra container. Hydra's public API is available at `http://127.0.0.1:4444` and the admin API at `http://127.0.0.1:4445`.
+  </Step>
+  <Step title="Create a client and test the client credentials flow">
+    ```bash
+    client=$(docker compose -f quickstart.yml exec hydra \
+      hydra create client \
+      --endpoint http://127.0.0.1:4445/ \
+      --format json \
+      --grant-type client_credentials)
+
+    client_id=$(echo $client | jq -r '.client_id')
+    client_secret=$(echo $client | jq -r '.client_secret')
+
+    docker compose -f quickstart.yml exec hydra \
+      hydra perform client-credentials \
+      --endpoint http://127.0.0.1:4444/ \
+      --client-id "$client_id" \
+      --client-secret "$client_secret"
+    ```
+
+    A successful response shows an `ACCESS TOKEN` with the `ory_at_` prefix.
+  </Step>
+</Steps>
+
+---
+
+## Manual Docker deployment
+
+For more control over your setup, run Hydra and PostgreSQL as separate containers on a shared Docker network.
+
+<Steps>
+  <Step title="Create a Docker network">
+    ```bash
+    docker network create hydraguide
+    ```
+  </Step>
+  <Step title="Start PostgreSQL">
+    ```bash
+    docker run \
+      --network hydraguide \
+      --name hydra-postgres \
+      -e POSTGRES_USER=hydra \
+      -e POSTGRES_PASSWORD=secret \
+      -e POSTGRES_DB=hydra \
+      -d postgres:14
+    ```
+  </Step>
+  <Step title="Run database migrations">
+    ```bash
+    export DSN="postgres://hydra:secret@hydra-postgres:5432/hydra?sslmode=disable"
+    export SECRETS_SYSTEM=$(openssl rand -base64 32)
+
+    docker run --rm \
+      --network hydraguide \
+      -e DSN="$DSN" \
+      oryd/hydra:latest \
+      migrate sql --yes -e
+    ```
+  </Step>
+  <Step title="Start Ory Hydra">
+    ```bash
+    docker run -d \
+      --name ory-hydra \
+      --network hydraguide \
+      -p 4444:4444 \
+      -p 4445:4445 \
+      -e SECRETS_SYSTEM="$SECRETS_SYSTEM" \
+      -e DSN="$DSN" \
+      -e URLS_SELF_ISSUER=https://hydra.example.com/ \
+      -e URLS_LOGIN=https://your-app.example.com/login \
+      -e URLS_CONSENT=https://your-app.example.com/consent \
+      oryd/hydra:latest serve all
+    ```
+  </Step>
+  <Step title="Verify Hydra is running">
+    ```bash
+    docker logs ory-hydra
+    curl https://localhost:4445/health/ready
+    # Expected: {"status":"ok"}
+    ```
+  </Step>
+</Steps>
+
+Key environment variables for the `docker run` command:
+
+| Variable | Required | Description |
+|---|---|---|
+| `SECRETS_SYSTEM` | Yes | 32-byte random secret for encrypting the database and signing tokens. Must remain constant across restarts. |
+| `DSN` | Yes | Database connection string. |
+| `URLS_SELF_ISSUER` | Yes | Publicly accessible URL of the Hydra instance. Included as the `iss` claim in tokens. |
+| `URLS_LOGIN` | Yes | URL of your login page. |
+| `URLS_CONSENT` | Yes | URL of your consent page. |
+
+<Note>
+To use a configuration file instead of environment variables, mount it into the container:
+
+```bash
+docker run -d \
+  -v $(pwd)/hydra.yaml:/hydra.yaml \
+  oryd/hydra:latest serve all --config /hydra.yaml
+```
+</Note>
+
+---
+
+## TLS and HTTPS
+
+Hydra does not enable TLS by default. In production, terminate TLS at an edge load balancer or reverse proxy (nginx, Caddy, AWS ALB) and connect to Hydra over plain HTTP internally.
+
+If you need Hydra to terminate TLS directly, generate a certificate and configure it:
+
+```bash
+openssl genrsa -out key.pem 4096
+openssl req -new -x509 -sha256 -key key.pem -out cert.crt -days 365
+
+export SERVE_TLS_CERT_PATH=/path/to/cert.crt
+export SERVE_TLS_KEY_PATH=/path/to/key.pem
+```
+
+Or, encode the files as base64 and pass them as environment variables:
+
+```bash
+export SERVE_TLS_CERT_BASE64=$(base64 -i cert.crt)
+export SERVE_TLS_KEY_BASE64=$(base64 -i key.pem)
+```
+
+Then enable TLS in `hydra.yaml`:
+
+```yaml
+serve:
+  tls:
+    enabled: true
+    cert:
+      path: /path/to/cert.crt
+    key:
+      path: /path/to/key.pem
+```
+
+---
+
+## Public and admin API endpoints
+
+Hydra exposes two separate HTTP servers:
+
+| Port | Purpose | Expose publicly? |
+|---|---|---|
+| `4444` (public) | OAuth2 and OIDC protocol endpoints | Yes |
+| `4445` (admin) | Client management, token introspection, consent handling | No |
+
+The **public** port handles:
+- `/.well-known/openid-configuration`
+- `/.well-known/jwks.json`
+- `/oauth2/auth`
+- `/oauth2/token`
+- `/oauth2/revoke`
+- `/userinfo`
+
+The **admin** port handles:
+- `/admin/clients` — OAuth2 client management
+- `/admin/oauth2/auth/requests` — login and consent challenge management
+- `/admin/oauth2/introspect` — token introspection
+- `/admin/keys` — JSON Web Key management
+
+<Warning>
+The admin port has no built-in access control. Never expose it directly to the public internet. Protect it with a network firewall, API gateway, or reverse proxy that enforces authentication.
+</Warning>
+
+---
+
+## Production checklist
+
+Before going to production, review these configuration areas:
+
+### Secrets
+
+Generate cryptographically secure random secrets for the `system`, `cookie`, and `pagination` keys:
+
+```bash
+openssl rand -base64 32
+```
+
+Configure them in `hydra.yaml`:
+
+```yaml
+secrets:
+  system:
+    - "your-32-byte-system-secret-here"
+  cookie:
+    - "your-32-byte-cookie-secret-here"
+```
+
+<Warning>
+The `secrets.system` value must remain identical across all Hydra instances and restarts. If it changes, all existing tokens become invalid.
+</Warning>
+
+### Run Hydra behind a reverse proxy
+
+Do not expose Hydra directly to the public internet. Place it behind a load balancer or API gateway that:
+
+- Terminates TLS
+- Passes the original `Host` header to Hydra
+- Strips any path prefix if routing by path (for example, `https://example.com/hydra/` → `http://internal:4444/`)
+
+Set `strip_request_path=true` and `preserve_host=true` in your gateway configuration to ensure Hydra computes correct redirect URIs.
+
+### High-availability deployments
+
+When running multiple Hydra instances behind a load balancer:
+
+1. Start with a single instance first to allow Hydra to seed the database (generate JSON Web Keys and run initial setup).
+2. Once the first instance is healthy, scale out additional instances.
+3. All instances must share the same database and the same `secrets.system` value.
+
+### Disallow private IP ranges
+
+If Hydra makes outgoing HTTP requests (for example, to token endpoint auth webhook URLs), you can prevent it from reaching private IP ranges:
+
+```yaml
+clients:
+  http:
+    disallow_private_ip_ranges: true
+```
+
+---
+
+## Kubernetes with Helm
+
+Ory provides an official Helm chart for deploying Hydra on Kubernetes. Add the Ory Helm repository and install the chart into your cluster:
+
+```bash
+helm repo add ory https://k8s.ory.com/helm/charts
+helm repo update
+helm install ory-hydra ory/hydra --namespace ory --create-namespace -f values.yaml
+```
+
+See the [Ory Helm Charts repository](https://github.com/ory/k8s) for installation instructions, values reference, and ingress configuration examples.
+
+---
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Overview" icon="circle-info" href="/hydra/overview">
+    Understand Hydra's architecture, supported grant types, and when to use it.
+  </Card>
+  <Card title="Practical guides" icon="book-open" href="/hydra/guides">
+    Wire up login and consent UI, manage OAuth2 clients, and work with tokens.
+  </Card>
+</CardGroup>

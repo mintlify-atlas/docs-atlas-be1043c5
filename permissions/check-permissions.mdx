@@ -1,0 +1,278 @@
+---
+title: "Checking permissions and managing relation tuples"
+description: "Create relation tuples, verify access with the check API, list relationships, and expand subject sets using the Ory Permissions REST API and SDK."
+---
+
+After you define a permission model, you interact with Ory Permissions through its API to write relationships and evaluate permission checks. This page covers the three core operations: writing relationships, checking permissions, and expanding subject sets to see who has access to a resource.
+
+<Info>
+  All examples use the Ory Network API. Replace `{project.slug}` with your project slug from the [Ory Console](https://console.ory.sh/). You can also use the Ory SDK for Go, TypeScript, Python, PHP, Java, and other languages.
+</Info>
+
+## Write relationships
+
+Before you can check permissions, you need to create relationships. A relationship connects a subject to an object through a named relation in a namespace.
+
+### Create a relationship
+
+Use `POST /relation-tuples` to write a new relationship:
+
+<CodeGroup>
+
+```bash cURL
+curl --request POST \
+  --url https://{project.slug}.projects.oryapis.com/relation-tuples \
+  --header 'Authorization: Bearer {ory-session-token}' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "namespace": "Document",
+    "object": "ec788a82-a12e-45a4-b906-3e69f78c94e4",
+    "relation": "owners",
+    "subject_id": "User:alice"
+  }'
+```
+
+```typescript TypeScript (SDK)
+import { RelationshipApi, Configuration } from "@ory/client"
+
+const relationships = new RelationshipApi(
+  new Configuration({ basePath: "https://{project.slug}.projects.oryapis.com" })
+)
+
+await relationships.createRelationship({
+  createRelationshipBody: {
+    namespace: "Document",
+    object: "ec788a82-a12e-45a4-b906-3e69f78c94e4",
+    relation: "owners",
+    subject_id: "User:alice",
+  },
+})
+```
+
+```go Go (SDK)
+import (
+  ory "github.com/ory/client-go"
+  "context"
+)
+
+apiClient := ory.NewAPIClient(&ory.Configuration{
+  Servers: []ory.ServerConfiguration{
+    {URL: "https://{project.slug}.projects.oryapis.com"},
+  },
+})
+
+_, _, err := apiClient.RelationshipApi.
+  CreateRelationship(context.Background()).
+  CreateRelationshipBody(ory.CreateRelationshipBody{
+    Namespace: ory.PtrString("Document"),
+    Object:    ory.PtrString("ec788a82-a12e-45a4-b906-3e69f78c94e4"),
+    Relation:  ory.PtrString("owners"),
+    SubjectId: ory.PtrString("User:alice"),
+  }).Execute()
+```
+
+</CodeGroup>
+
+### Grant access to a group (subject set)
+
+To grant a role or group access, use a subject set instead of a subject ID. The following relationship says that all members of `Group:editors` are editors of the document:
+
+```bash cURL
+curl --request POST \
+  --url https://{project.slug}.projects.oryapis.com/relation-tuples \
+  --header 'Authorization: Bearer {ory-session-token}' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "namespace": "Document",
+    "object": "ec788a82-a12e-45a4-b906-3e69f78c94e4",
+    "relation": "editors",
+    "subject_set": {
+      "namespace": "Group",
+      "object": "editors",
+      "relation": "members"
+    }
+  }'
+```
+
+### Delete a relationship
+
+To revoke access, delete the relationship with `DELETE /relation-tuples`:
+
+```bash cURL
+curl --request DELETE \
+  --url "https://{project.slug}.projects.oryapis.com/relation-tuples?namespace=Document&object=ec788a82-a12e-45a4-b906-3e69f78c94e4&relation=owners&subject_id=User%3Aalice" \
+  --header 'Authorization: Bearer {ory-session-token}'
+```
+
+## Check permissions
+
+The check API answers the question: "does this subject have this permission on this object?" It resolves subject sets and traverses the relationship graph according to your permission model.
+
+### Perform a permission check
+
+Use `GET /relation-tuples/check` with the permission name as the `relation` parameter:
+
+<CodeGroup>
+
+```bash cURL
+curl --request GET \
+  --url "https://{project.slug}.projects.oryapis.com/relation-tuples/check?namespace=Document&object=ec788a82-a12e-45a4-b906-3e69f78c94e4&relation=view&subject_id=User%3Aalice" \
+  --header 'Authorization: Bearer {ory-session-token}'
+```
+
+```typescript TypeScript (SDK)
+import { PermissionApi, Configuration } from "@ory/client"
+
+const permissions = new PermissionApi(
+  new Configuration({ basePath: "https://{project.slug}.projects.oryapis.com" })
+)
+
+const { data } = await permissions.checkPermission({
+  namespace: "Document",
+  object: "ec788a82-a12e-45a4-b906-3e69f78c94e4",
+  relation: "view",
+  subjectId: "User:alice",
+})
+
+if (data.allowed) {
+  // serve the resource
+}
+```
+
+```go Go (SDK)
+import (
+  ory "github.com/ory/client-go"
+  "context"
+)
+
+check, _, err := apiClient.PermissionApi.
+  CheckPermission(context.Background()).
+  Namespace("Document").
+  Object("ec788a82-a12e-45a4-b906-3e69f78c94e4").
+  Relation("view").
+  SubjectId("User:alice").
+  Execute()
+
+if check.GetAllowed() {
+  // serve the resource
+}
+```
+
+</CodeGroup>
+
+The response is a JSON object with a single `allowed` boolean:
+
+```json
+{ "allowed": true }
+```
+
+<Warning>
+  Do not cache permission check results in your application. Ory Network already handles caching and invalidation. Caching responses locally can lead to stale permission data and security vulnerabilities.
+</Warning>
+
+### When to check permissions
+
+Check permissions at every point in your application where an action requires access control. This includes reading, creating, updating, and deleting resources. Authenticate the subject first, then check permissions before returning data or executing state-changing operations.
+
+## List relationships
+
+Use `GET /relation-tuples` to query relationships by any combination of namespace, object, relation, and subject. This is useful for building permission management UIs and auditing access.
+
+### List all relationships for a subject
+
+```bash cURL
+curl --request GET \
+  --url "https://{project.slug}.projects.oryapis.com/relation-tuples?namespace=Document&subject_id=User%3Aalice" \
+  --header 'Authorization: Bearer {ory-session-token}'
+```
+
+Example response:
+
+```json
+{
+  "relation_tuples": [
+    {
+      "namespace": "Document",
+      "object": "ec788a82-a12e-45a4-b906-3e69f78c94e4",
+      "relation": "owners",
+      "subject_id": "User:alice"
+    },
+    {
+      "namespace": "Document",
+      "object": "f1d3e812-9c2a-4b77-98a3-c72d4490ab11",
+      "relation": "viewers",
+      "subject_id": "User:alice"
+    }
+  ],
+  "next_page_token": ""
+}
+```
+
+### List all subjects with a specific role
+
+```bash cURL
+curl --request GET \
+  --url "https://{project.slug}.projects.oryapis.com/relation-tuples?namespace=Group&object=admins&relation=members" \
+  --header 'Authorization: Bearer {ory-session-token}'
+```
+
+## Expand subject sets
+
+The expand API recursively resolves a subject set into all the subjects it includes. Use it to display who has access to a resource and why — for example, in a sharing dialog.
+
+### Expand access on an object
+
+```bash cURL
+curl --request GET \
+  --url "https://{project.slug}.projects.oryapis.com/relation-tuples/expand?namespace=Document&object=ec788a82-a12e-45a4-b906-3e69f78c94e4&relation=access&max-depth=3" \
+  --header 'Authorization: Bearer {ory-session-token}'
+```
+
+The response is a tree of subjects. Each node is either a leaf (a specific subject) or a union node that expands into further subject sets:
+
+```json
+{
+  "type": "union",
+  "subject_set": {
+    "namespace": "Document",
+    "object": "ec788a82-a12e-45a4-b906-3e69f78c94e4",
+    "relation": "access"
+  },
+  "children": [
+    {
+      "type": "union",
+      "subject_set": {
+        "namespace": "Document",
+        "object": "ec788a82-a12e-45a4-b906-3e69f78c94e4",
+        "relation": "owners"
+      },
+      "children": [
+        {
+          "type": "leaf",
+          "subject_id": "User:bob"
+        }
+      ]
+    },
+    {
+      "type": "leaf",
+      "subject_id": "User:alice"
+    }
+  ]
+}
+```
+
+This response shows that `User:bob` has access because they are an owner, while `User:alice` has direct access. You can use the tree structure to explain to users why they have access.
+
+<Tip>
+  Use the `max-depth` parameter to limit how deep the tree is resolved. A value of `3` is sufficient for most models with ownership plus one level of inheritance. Deeper trees increase response latency.
+</Tip>
+
+## API summary
+
+| Operation | Method | Endpoint |
+|---|---|---|
+| Create a relationship | `POST` | `/relation-tuples` |
+| Delete a relationship | `DELETE` | `/relation-tuples` |
+| List relationships | `GET` | `/relation-tuples` |
+| Check a permission | `GET` | `/relation-tuples/check` |
+| Expand a subject set | `GET` | `/relation-tuples/expand` |

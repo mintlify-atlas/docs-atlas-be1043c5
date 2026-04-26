@@ -1,0 +1,151 @@
+---
+title: "Ory Network API rate limits and best practices"
+description: "Understand project and endpoint-based rate limits by plan, read rate limit response headers, handle 429 errors gracefully, and optimize your integration."
+keywords: ["rate limits", "429", "throttling", "rps", "rpm", "burst limit", "sustained limit", "Ory Network"]
+---
+
+Ory Network applies rate limiting to protect all customers from abuse, prevent service disruptions, and ensure fair resource allocation. There are two independent layers of rate limiting: project-level limits based on your subscription plan and environment, and endpoint-level limits that protect specific APIs against attack patterns regardless of your plan.
+
+## How project rate limits work
+
+Project rate limits depend on two factors:
+
+1. **Workspace subscription plan** — Developer, Production, Growth, or Enterprise.
+2. **Project environment** — Production, Staging, or Development.
+
+Each policy defines two thresholds:
+
+- **Burst limit** — maximum requests per second (rps), allowing short traffic spikes.
+- **Sustained limit** — maximum requests per minute (rpm), enforcing consistent throughput over time.
+
+Higher-risk endpoints (such as registration, recovery, and admin identity management) have stricter limits than general API traffic.
+
+## Rate limits by plan
+
+### Developer plan
+
+All environments (Production, Staging, Development) share the same limits on the Developer plan.
+
+| Endpoint / bucket | Burst (rps) | Sustained (rpm) |
+|---|---|---|
+| `/sessions/whoami` | 10 | 300 |
+| `/admin/oauth2/introspect` | 10 | 300 |
+| `/relation-tuples/check` | 10 | 300 |
+| `GET /admin/identities` | 1 | 10 |
+| `POST /admin/identities` | 1 | 10 |
+| `PATCH /admin/identities` | 1 | 10 |
+| `POST /admin/recovery/*` | 1 | 10 |
+| `POST /self-service/registration` | 1 | 10 |
+| `POST /self-service/recovery` | 1 | 10 |
+| `POST /self-service/settings` | 1 | 10 |
+| `POST /self-service/verification` | 1 | 10 |
+| `/scim/**` | 1 | 10 |
+| All other endpoints (`*`) | 5 | 150 |
+
+### Production plan
+
+<Note>Production plan limits also apply to the legacy Essential plan.</Note>
+
+| Environment | Endpoint / bucket | Burst (rps) | Sustained (rpm) |
+|---|---|---|---|
+| Production | `/sessions/whoami` | 80 | 1,800 |
+| | `/admin/oauth2/introspect` | 80 | 1,800 |
+| | `/relation-tuples/check` | 80 | 1,800 |
+| | `GET /admin/identities` | 10 | 300 |
+| | `POST /admin/recovery/*` | 10 | 30 |
+| | `/scim/**` | 10 | 300 |
+| | `*` | 40 | 900 |
+| Development / Staging | (same as Developer plan limits above) | — | — |
+
+### Growth plan
+
+<Note>Growth plan limits also apply to the legacy Scale plan.</Note>
+
+| Environment | Endpoint / bucket | Burst (rps) | Sustained (rpm) |
+|---|---|---|---|
+| Production | `/sessions/whoami` | 800 | 18,000 |
+| | `/admin/oauth2/introspect` | 800 | 18,000 |
+| | `/relation-tuples/check` | 800 | 18,000 |
+| | `GET /admin/identities` | 20 | 600 |
+| | `POST /admin/recovery/*` | 10 | 300 |
+| | `/scim/**` | 10 | 300 |
+| | `*` | 400 | 9,000 |
+| Development / Staging | (same as Developer plan limits above) | — | — |
+
+### Enterprise plan
+
+The Enterprise plan starts with the same limits as Growth for Production environments, with higher defaults across the board. If your workload requires limits beyond what is shown, [contact Ory](https://ory.com/contact) to discuss custom thresholds.
+
+| Environment | Endpoint / bucket | Burst (rps) | Sustained (rpm) |
+|---|---|---|---|
+| Production | `/sessions/whoami` | 1,200 | 36,000 |
+| | `/admin/oauth2/introspect` | 1,200 | 36,000 |
+| | `/relation-tuples/check` | 1,200 | 36,000 |
+| | `GET /admin/identities` | 60 | 1,200 |
+| | `POST /admin/recovery/*` | 20 | 600 |
+| | `/scim/**` | 20 | 600 |
+| | `*` | 800 | 18,000 |
+| Development / Staging | (same as Developer plan limits above) | — | — |
+
+## Endpoint-based rate limits
+
+Endpoint-based limits operate independently of project limits and protect specific APIs against attack patterns such as brute-force and credential stuffing.
+
+### Volumetric limits
+
+Ory analyzes request patterns using source IP addresses, JA3/JA4 TLS fingerprints, request frequency, authentication status, and HTTP method to detect and block volumetric attacks.
+
+### Inflight limits
+
+Inflight limits prevent concurrent requests to the same resource, eliminating race conditions on write operations. These limits are keyed on `{project_id} + {full_path}`.
+
+| Endpoint | Methods | Status |
+|---|---|---|
+| `/admin/identities` | `POST`, `PATCH` | Enforced — blocks concurrent requests |
+| `/admin/identities/{id}` | `PUT`, `PATCH`, `DELETE` | Enforced — blocks concurrent requests |
+| `/admin/identities/{id}/credentials/{type}` | `DELETE` | Enforced — blocks concurrent requests |
+| `/admin/identities/{id}/sessions` | `DELETE` | Enforced — blocks concurrent requests |
+| `/admin/sessions/{id}` | `DELETE` | Report-only |
+| `/admin/sessions/{id}/extend` | `PATCH` | Report-only |
+| `/self-service/recovery` | `POST` | Report-only |
+
+<Note>
+  Report-only endpoints log violations but do not block requests yet. `GET`, `OPTIONS`, and `HEAD` requests are exempt from inflight limits.
+</Note>
+
+## Handle 429 responses
+
+When you exceed a rate limit, Ory returns HTTP `429 Too Many Requests`. Implement exponential backoff with jitter in your client to handle these responses gracefully:
+
+```javascript title="retry-with-backoff.js"
+async function fetchWithRetry(url, options, maxRetries = 3) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const response = await fetch(url, options);
+
+    if (response.status !== 429) {
+      return response;
+    }
+
+    const retryAfter = response.headers.get("Retry-After");
+    const delay = retryAfter
+      ? parseInt(retryAfter, 10) * 1000
+      : Math.min(1000 * 2 ** attempt + Math.random() * 100, 30000);
+
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+
+  throw new Error("Max retries exceeded");
+}
+```
+
+## Best practices
+
+**Cache session checks.** The `/sessions/whoami` endpoint is the most commonly rate-limited. Cache session data on your server for the lifetime of your own request context rather than calling Ory on every API request.
+
+**Use batch admin APIs.** When creating or updating many identities, use `POST /admin/identities` (bulk) rather than individual creates in a tight loop.
+
+**Separate environments properly.** Development and Staging environments share lower limits regardless of plan. Do not run load tests or stress tests against Development or Staging — use a dedicated Production environment project.
+
+**Respect the `Retry-After` header.** When present, this header tells you exactly how long to wait before retrying. Honor it rather than retrying immediately.
+
+**Upgrade your plan for higher limits.** If your Production workload consistently approaches or hits limits on the Production plan, consider upgrading to Growth or Enterprise, or [contact Ory](https://ory.com/contact) for custom limits.

@@ -1,0 +1,427 @@
+---
+title: "Oathkeeper request pipeline and access rules"
+description: "Reference for Oathkeeper's four-stage pipeline: authenticators, authorizers, mutators, and error handlers, with access rule structure and JSON examples."
+keywords: ["oathkeeper", "pipeline", "authenticators", "authorizers", "mutators", "error handlers", "access rules"]
+---
+
+Every HTTP request that Oathkeeper processes moves through a four-stage pipeline defined by access rules. Each stage is handled by a pluggable handler: an authenticator validates credentials, an authorizer checks permissions, a mutator transforms the request for upstream, and an error handler decides what to return when any stage fails.
+
+Understanding this pipeline lets you write precise access rules and choose the right handler for each requirement.
+
+## Access rule structure
+
+An access rule is a JSON or YAML document that ties a URL pattern to a set of pipeline handlers. Rules are loaded from files, inline base64 strings, HTTP(S) URLs, or object storage (S3, GCS, Azure Blob).
+
+```json
+{
+  "id": "my-rule",
+  "version": "v0.36.0-beta.4",
+  "upstream": {
+    "url": "http://my-backend-service",
+    "preserve_host": true,
+    "strip_path": "/api/v1"
+  },
+  "match": {
+    "url": "http://my-app/api/v1/<.*>",
+    "methods": ["GET", "POST"]
+  },
+  "authenticators": [{ "handler": "jwt" }],
+  "authorizer": { "handler": "allow" },
+  "mutators": [{ "handler": "header", "config": { "headers": { "X-User": "{{ print .Subject }}" } } }],
+  "errors": [{ "handler": "json" }]
+}
+```
+
+The same rule in YAML format:
+
+```yaml
+id: my-rule
+version: v0.36.0-beta.4
+upstream:
+  url: http://my-backend-service
+  preserve_host: true
+  strip_path: /api/v1
+match:
+  url: http://my-app/api/v1/<.*>
+  methods:
+    - GET
+    - POST
+authenticators:
+  - handler: jwt
+authorizer:
+  handler: allow
+mutators:
+  - handler: header
+    config:
+      headers:
+        X-User: "{{ print .Subject }}"
+errors:
+  - handler: json
+```
+
+### Key fields
+
+- **`id`** — A unique string identifier for the rule.
+- **`version`** — Semantic version (for example `v0.36.0-beta.4`). Used for migration when upgrading Oathkeeper.
+- **`upstream.url`** — Where to forward the request if it is allowed (reverse proxy mode only).
+- **`upstream.strip_path`** — Path prefix to strip before forwarding. `/api/v1` strips that prefix so `/api/v1/users` forwards as `/users`.
+- **`match.url`** — URL to match, supporting regexp (`<pattern>`) or glob (`<pattern>`) expressions enclosed in angle brackets.
+- **`match.methods`** — HTTP methods the rule applies to.
+
+### URL matching strategies
+
+Set `access_rules.matching_strategy` in your global config to either `regexp` (default) or `glob`.
+
+With **regexp**, capture groups extracted from the URL are available in handler templates via `.MatchContext.RegexpCaptureGroups`:
+
+```json
+{
+  "match": { "url": "http://my-app/users/<[0-9]+>/roles/<[a-z]+>" }
+}
+```
+
+If the request is `GET /users/42/roles/admin`, the capture groups are `["42", "admin"]`.
+
+### Handler configuration
+
+Every handler can be configured globally in `oathkeeper.yml` and overridden per access rule. Per-rule config takes precedence over global config:
+
+```yaml
+# oathkeeper.yml (global)
+authenticators:
+  anonymous:
+    enabled: true
+    config:
+      subject: guest
+```
+
+```json
+// rule.json (overrides global subject)
+{
+  "authenticators": [{ "handler": "anonymous", "config": { "subject": "visitor" } }]
+}
+```
+
+## Stage 1: Authenticators
+
+Authenticators inspect the HTTP request and validate credentials. You can list multiple authenticators per rule; Oathkeeper tries them in order and uses the first one that recognizes the credential format. If a handler recognizes but rejects credentials (for example, an invalid token), the request is denied immediately—the remaining authenticators are not tried.
+
+A successful authenticator produces a **subject** and optional **extra** claims that subsequent stages can use.
+
+### Available authenticators
+
+| Handler | Description |
+|---|---|
+| `noop` | Passes all requests without authentication. Subject is empty. Use when the upstream handles auth itself. |
+| `unauthorized` | Rejects all requests with HTTP 401. |
+| `anonymous` | Allows requests that carry no `Authorization` header, setting the subject to a configurable name (default: `anonymous`). |
+| `cookie_session` | Forwards the request to a session store URL. If the store returns `{"subject": "...", "extra": {}}`, the request is authenticated. |
+| `bearer_token` | Forwards the request to a session store URL using a Bearer token extracted from a header, query parameter, or cookie. |
+| `oauth2_client_credentials` | Performs the OAuth 2.0 Client Credentials grant using HTTP Basic credentials and validates the result against a token endpoint. |
+| `oauth2_introspection` | Validates a Bearer token via OAuth 2.0 Token Introspection. Supports scope validation, audience checking, and pre-authorization. |
+| `jwt` | Validates a Bearer token as a signed JWT using JSON Web Keys fetched from configurable JWKS URLs. |
+
+<Tabs>
+  <Tab title="anonymous">
+
+    Allows requests with no `Authorization` header. Any request that includes credentials is rejected unless another authenticator is configured to handle them.
+
+    ```yaml
+    authenticators:
+      anonymous:
+        enabled: true
+        config:
+          subject: guest
+    ```
+
+  </Tab>
+  <Tab title="jwt">
+
+    Validates a JWT using public keys fetched from JWKS endpoints. Supports issuer, audience, scope, and algorithm validation.
+
+    ```yaml
+    authenticators:
+      jwt:
+        enabled: true
+        config:
+          jwks_urls:
+            - https://my-idp.example.com/.well-known/jwks.json
+          trusted_issuers:
+            - https://my-idp.example.com/
+          required_scope:
+            - read:api
+          allowed_algorithms:
+            - RS256
+    ```
+
+  </Tab>
+  <Tab title="oauth2_introspection">
+
+    Calls an OAuth 2.0 introspection endpoint to validate a Bearer token. Supports token caching to reduce load on the introspection endpoint.
+
+    ```yaml
+    authenticators:
+      oauth2_introspection:
+        enabled: true
+        config:
+          introspection_url: https://my-hydra/oauth2/introspect
+          scope_strategy: exact
+          required_scope:
+            - photo
+          cache:
+            enabled: true
+            ttl: 60s
+    ```
+
+  </Tab>
+  <Tab title="cookie_session">
+
+    Forwards request headers to a session check URL (for example, Ory Kratos's `/sessions/whoami`). The session store must return `{"subject": "...", "extra": {}}`.
+
+    ```yaml
+    authenticators:
+      cookie_session:
+        enabled: true
+        config:
+          check_session_url: https://kratos.example.com/sessions/whoami
+          only:
+            - ory_kratos_session
+    ```
+
+  </Tab>
+</Tabs>
+
+## Stage 2: Authorizers
+
+Authorizers check whether the authenticated subject has permission to access the requested resource. Each access rule has exactly one authorizer.
+
+### Available authorizers
+
+| Handler | Description |
+|---|---|
+| `allow` | Permits every request that reaches this stage. |
+| `deny` | Denies every request with HTTP 403. |
+| `keto_engine_acp_ory` | Delegates the permission check to Ory Keto using Ory-flavored Access Control Policies. Supports Go template substitution for resource and action values. |
+| `remote` | Sends a POST request with the original body to a remote endpoint. `200 OK` allows; `403 Forbidden` denies. |
+| `remote_json` | Sends a POST request with a configurable JSON payload (supporting templates) to a remote endpoint. `200 OK` allows; `403 Forbidden` denies. |
+
+<Tabs>
+  <Tab title="allow">
+
+    ```json
+    { "authorizer": { "handler": "allow" } }
+    ```
+
+  </Tab>
+  <Tab title="keto_engine_acp_ory">
+
+    Uses Go templates to construct the resource and action from captured URL groups or session fields:
+
+    ```json
+    {
+      "authorizer": {
+        "handler": "keto_engine_acp_ory",
+        "config": {
+          "base_url": "http://keto:4466/",
+          "required_action": "my:action:{{ printIndex .MatchContext.RegexpCaptureGroups 0 }}",
+          "required_resource": "my:resource:{{ printIndex .MatchContext.RegexpCaptureGroups 1 }}"
+        }
+      }
+    }
+    ```
+
+  </Tab>
+  <Tab title="remote_json">
+
+    ```json
+    {
+      "authorizer": {
+        "handler": "remote_json",
+        "config": {
+          "remote": "http://my-authz-service/authorize",
+          "payload": "{\"subject\": \"{{ print .Subject }}\", \"resource\": \"{{ printIndex .MatchContext.RegexpCaptureGroups 0 }}\"}"
+        }
+      }
+    }
+    ```
+
+  </Tab>
+</Tabs>
+
+## Stage 3: Mutators
+
+Mutators transform the HTTP request before Oathkeeper forwards it to the upstream server. You can chain multiple mutators; they execute in order. When using the Decision API, mutated headers are returned in the response so your gateway can apply them.
+
+### Available mutators
+
+| Handler | Description |
+|---|---|
+| `noop` | Forwards the request unchanged. |
+| `id_token` | Replaces the `Authorization` header with a signed JWT (OpenID Connect ID Token) containing session claims. |
+| `header` | Adds or replaces HTTP headers using Go template expressions against the session. |
+| `cookie` | Adds cookies to the forwarded request using Go template expressions. |
+| `hydrator` | Calls an external API to enrich the session's `extra` field before subsequent mutators run. |
+
+<Tabs>
+  <Tab title="header">
+
+    Inject the authenticated subject and arbitrary session data as HTTP headers:
+
+    ```json
+    {
+      "mutators": [{
+        "handler": "header",
+        "config": {
+          "headers": {
+            "X-User": "{{ print .Subject }}",
+            "X-User-Email": "{{ print .Extra.email }}"
+          }
+        }
+      }]
+    }
+    ```
+
+  </Tab>
+  <Tab title="id_token">
+
+    Generates a signed JWT and sets it as `Authorization: Bearer <token>`. Your upstream verifies the token using the public key at `/.well-known/jwks.json`.
+
+    ```json
+    {
+      "mutators": [{
+        "handler": "id_token",
+        "config": {
+          "claims": "{\"aud\": [\"https://my-backend/api\"], \"custom\": \"{{ print .Extra.role }}\"}"
+        }
+      }]
+    }
+    ```
+
+    Configure the mutator globally with the issuer and JWKS location:
+
+    ```yaml
+    mutators:
+      id_token:
+        enabled: true
+        config:
+          issuer_url: https://oathkeeper.example.com/
+          jwks_url: file:///etc/oathkeeper/jwks.json
+          ttl: 60s
+    ```
+
+  </Tab>
+  <Tab title="hydrator">
+
+    Calls an external API to enrich `.Extra` before a downstream mutator uses those values:
+
+    ```json
+    {
+      "mutators": [
+        {
+          "handler": "hydrator",
+          "config": { "api": { "url": "http://user-enrichment-service/enrich" } }
+        },
+        {
+          "handler": "header",
+          "config": { "headers": { "X-User-Role": "{{ print .Extra.role }}" } }
+        }
+      ]
+    }
+    ```
+
+  </Tab>
+</Tabs>
+
+## Stage 4: Error handlers
+
+Error handlers execute when any earlier stage fails. You can configure multiple error handlers per rule with matching conditions so different clients receive the appropriate response type.
+
+### Available error handlers
+
+| Handler | Description |
+|---|---|
+| `json` | Returns an `application/json` error body. Enabled by default. Set `verbose: true` for detailed messages. |
+| `redirect` | Returns HTTP 302 (or 301) to a configured URL. Optionally appends the original URL as a query parameter. |
+| `www_authenticate` | Returns HTTP 401 with a `WWW-Authenticate` header. |
+
+### Matching conditions
+
+Error handlers support `when` conditions to match on error type, `Accept` header, `Content-Type` header, or client IP. When clauses use `OR` between entries and `AND` between subkeys within an entry.
+
+```json
+{
+  "errors": [
+    {
+      "handler": "json",
+      "config": {
+        "when": [{ "request": { "header": { "accept": ["application/json"] } } }]
+      }
+    },
+    {
+      "handler": "redirect",
+      "config": {
+        "to": "https://example.com/login",
+        "return_to_query_param": "return_to",
+        "when": [{ "request": { "header": { "accept": ["text/html", "text/*"] } } }]
+      }
+    }
+  ]
+}
+```
+
+### Global fallback
+
+Set a global fallback handler in `oathkeeper.yml` so rules that don't define explicit error handling have a sensible default:
+
+```yaml
+errors:
+  fallback:
+    - json
+  handlers:
+    json:
+      enabled: true
+    redirect:
+      enabled: true
+      config:
+        to: https://example.com/login
+```
+
+## Templating reference
+
+Handlers that support Go templates receive an `AuthenticationSession` struct with the following fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `.Subject` | `string` | The authenticated subject (user ID, client ID, etc.). |
+| `.Extra` | `map[string]interface{}` | Claims and additional data from the authentication step. |
+| `.Header` | `http.Header` | HTTP headers from the original request. |
+| `.MatchContext.RegexpCaptureGroups` | `[]string` | Values captured from the URL regexp groups. |
+| `.MatchContext.URL` | `*url.URL` | The full matched URL. |
+| `.MatchContext.Method` | `string` | The HTTP method of the request. |
+
+Use `print` to safely render values that may be absent (returns an empty string instead of `<no value>`):
+
+```json
+{ "claims": "{\"sub\": \"{{ print .Subject }}\", \"role\": \"{{ print .Extra.role }}\"}" }
+```
+
+Use `printIndex` to safely access a slice element without an out-of-range panic:
+
+```json
+{ "claims": "{\"resource\": \"{{ printIndex .MatchContext.RegexpCaptureGroups 0 }}\"}" }
+```
+
+<Note>
+Oathkeeper also supports the [Sprig](http://masterminds.github.io/sprig/) template function library in addition to the built-in `print` and `printIndex` functions.
+</Note>
+
+## Scoped credentials
+
+When using `oauth2_introspection` or `oauth2_client_credentials`, Oathkeeper validates OAuth 2.0 scopes using one of four strategies:
+
+| Strategy | Behavior |
+|---|---|
+| `hierarchic` | `foo` matches `foo`, `foo.bar`, `foo.baz` |
+| `wildcard` | `foo.*` matches `foo.bar` but not `bar` |
+| `exact` | `foo` matches only `foo` |
+| `none` | Scope validation is disabled |

@@ -1,0 +1,118 @@
+---
+title: "Ory Network security, compliance, and certifications"
+description: "Learn about Ory's SOC 2 Type 2, ISO 27001, GDPR, and OpenID certifications, data residency options, token security, and the bug bounty program."
+keywords: ["SOC 2", "ISO 27001", "GDPR", "OpenID", "compliance", "data residency", "security", "token formats", "bug bounty"]
+---
+
+Ory Network is built on the principle that security and privacy are not features you add later — they are the foundation. This page summarizes Ory's security posture, compliance certifications, data handling practices, and the token formats used across the platform.
+
+## Compliance certifications
+
+<CardGroup cols={2}>
+  <Card title="ISO 27001:2022" icon="shield-check">
+    Ory holds an ISO 27001:2022 certificate, verifying that an information security management system (ISMS) is in place to protect the confidentiality and integrity of your data.
+  </Card>
+  <Card title="SOC 2 Type 2" icon="file-certificate">
+    Ory is SOC 2 Type 2 certified. An independent auditor evaluated Ory's security, availability, confidentiality, and privacy controls over an extended period.
+  </Card>
+  <Card title="GDPR" icon="eu">
+    Ory Network supports EU data residency, providing APIs for data export and deletion, and implements technical controls aligned with GDPR requirements.
+  </Card>
+  <Card title="OpenID Connect" icon="id-badge">
+    Ory OAuth2 and OpenID Connect (Ory Hydra) is OpenID certified as a Basic OP, Implicit OP, Hybrid OP, Config OP, and Dynamic OP.
+  </Card>
+</CardGroup>
+
+Access all compliance documentation and request audit reports at the [Ory Trust Center](https://trust.ory.com).
+
+## Security SLA
+
+Ory Network users benefit from the following vulnerability response commitments:
+
+| Severity | Resolution time |
+|---|---|
+| Critical | 14 days |
+| High | 30 days |
+| Medium | 90 days |
+| Low | 180 days |
+| Informational | As needed |
+
+Patches are deployed automatically to Ory Network. Ory Network always runs the most current version.
+
+## Data residency
+
+Ory Network lets you choose where your identity data is stored. For projects serving European users, you can host all personal data on EU-based servers to support GDPR compliance.
+
+Cross-border transfers of personal data outside the EU are restricted under GDPR. By selecting EU data residency, your identity data remains within the EU jurisdiction throughout its lifecycle.
+
+## GDPR compliance posture
+
+Ory Network was designed with GDPR requirements in mind:
+
+- **Data portability** — Ory's APIs let you retrieve all personal data for a specific identity.
+- **Right to deletion** — Delete an identity and all associated personal data through the admin API.
+- **Data minimization** — Default identity schemas collect only what is needed for basic account operations.
+- **Accuracy** — The self-service account settings flow lets users view and update their own data.
+- **Integrity and confidentiality** — All traffic is encrypted in transit using TLS 1.2 or higher. Data at rest is encrypted with AES-256. Passwords are stored as salted bcrypt hashes.
+- **Breach response** — Ory has policies for notifying affected parties within the GDPR-mandated 72-hour window in the event of a data breach.
+
+<Note>
+  GDPR compliance is a shared responsibility. Ory provides the infrastructure and APIs; you are responsible for how your application collects consent, handles data subject requests, and processes personal data in your own systems.
+</Note>
+
+## Data protection measures
+
+**Vulnerability management** — Ory embeds vulnerability scanning into its CI/CD pipelines and scans all containers at build time. Running containers in production clusters are scanned continuously.
+
+**Penetration testing** — Third-party penetration tests are conducted quarterly.
+
+**Bug bounty program** — Ory runs a private bug bounty program through HackerOne. See [Bug bounty program](#bug-bounty-program) below.
+
+**Secure cloud infrastructure** — Ory Network runs on Google Cloud Platform.
+
+**Logging and audit trails** — Comprehensive logging enables forensic analysis of potential incidents.
+
+**Backup strategy** — Regular encrypted backups are stored to protect against data loss.
+
+## Token formats and prefixes
+
+Ory uses consistent, identifiable prefixes on all tokens and keys so that security scanners can detect leaked credentials automatically.
+
+| Token type | Prefix | Notes |
+|---|---|---|
+| OAuth 2.0 Access Token | `ory_at_` | Not applied when using JWTs |
+| OAuth 2.0 Refresh Token | `ory_rt_` | Not applied when using JWTs |
+| OAuth 2.0 Authorization Code | `ory_ac_` | Not applied when using JWTs |
+| Session cookie | `ory_session_` | Scoped to configured cookie domain |
+| Session token | `ory_st_` | Used when cookies are unavailable |
+| Logout token | `ory_lo_` | Issued on session termination |
+| Project API key | `ory_pat_` or `ory_apikey_` | Admin API access |
+| Workspace API key | `ory_wak_` | Management API access |
+| Ory internal cookies | `ory_` | CSRF protection, load balancing |
+
+<Tip>
+  Configure your secret scanning tools (GitHub Advanced Security, GitGuardian, etc.) to flag any of these prefixes to prevent credential leakage in source code or logs.
+</Tip>
+
+## Bug bounty program
+
+Ory runs a private bug bounty program through HackerOne. To participate, [create a HackerOne account](https://hackerone.com/sign_up) and request access at [security@ory.com](mailto:security@ory.com).
+
+**Response timelines:**
+
+- 1–2 business days to first response
+- 3–5 business days from submission to triage
+- 3–5 business days from triage to bounty decision
+
+**Reward amounts:**
+
+| Severity | Reward |
+|---|---|
+| Low | $100 |
+| Medium | $350 |
+| High | $1,000 |
+| Critical | $3,000 |
+
+**Out-of-scope items include:** attacks requiring physical device access, vulnerabilities in intentionally public infrastructure (docs, marketing site), missing rate limiting, software version disclosure, open redirects without demonstrated additional impact, and attacks through user-controlled runtime environments in self-hosted deployments.
+
+Please do not discuss vulnerabilities outside the HackerOne program without written consent from Ory.

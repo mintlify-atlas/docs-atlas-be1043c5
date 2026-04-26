@@ -1,0 +1,350 @@
+---
+title: "Ory Kratos self-service flows: login to recovery"
+description: "Understand Ory Kratos self-service flows — login, registration, settings, recovery, and verification — and how browser, SPA, and API flows differ."
+keywords: ["ory kratos", "self-service", "login flow", "registration flow", "recovery flow", "verification", "api flow", "browser flow"]
+---
+
+Ory Kratos handles identity-related actions that users perform themselves — registration, login, profile updates, password resets, and email verification — through a system called self-service flows. Each flow follows a consistent lifecycle: Kratos creates a flow object, your UI renders the form, the user submits it, and Kratos validates and completes the action. Your application never touches credentials directly.
+
+<Info>
+Ory Kratos applies security best practices established by NIST, IETF, Microsoft Research, Google Research, and others. This covers attack vectors such as account enumeration, phishing, brute force, and social engineering throughout every flow.
+</Info>
+
+## Available flows
+
+Kratos implements the following self-service flows:
+
+<CardGroup cols={2}>
+  <Card title="Login" icon="right-to-bracket">
+    Authenticate with password, passkey, social sign-in, or one-time code.
+  </Card>
+  <Card title="Registration" icon="user-plus">
+    Create a new identity. Supports the same credential methods as login.
+  </Card>
+  <Card title="Settings" icon="sliders">
+    Update profile traits, change password, manage 2FA methods, link social accounts.
+  </Card>
+  <Card title="Account recovery" icon="key">
+    Regain access to an account via email or SMS link/code.
+  </Card>
+  <Card title="Address verification" icon="envelope-circle-check">
+    Confirm ownership of an email address or phone number.
+  </Card>
+  <Card title="Logout" icon="right-from-bracket">
+    Invalidate the active session cookie or session token.
+  </Card>
+</CardGroup>
+
+## Flow methods
+
+Each flow is implemented through one or more **flow methods** that handle a specific credential type or action:
+
+| Method | Used in | Description |
+|---|---|---|
+| `password` | Login, registration, settings | Email/username and password |
+| `oidc` | Login, registration, settings | Social sign-in (OAuth2/OpenID Connect) |
+| `code` | Login, registration, recovery, verification | One-time password via email or SMS |
+| `passkey` | Login, registration, settings | FIDO2/WebAuthn passkeys |
+| `totp` | Settings, login (2FA) | Time-based one-time password (authenticator app) |
+| `profile` | Settings | Update identity traits (name, avatar, etc.) |
+| `link` | Recovery | Click-to-reset password link sent by email |
+
+## Flow types
+
+Kratos supports three flow types. The correct type depends on the client context.
+
+<Tabs>
+
+<Tab title="Browser flows (server-side)">
+
+Server-side browser flows are used by applications that render HTML on the server — Node.js, PHP, Java, Ruby, Python, and similar stacks.
+
+These flows use:
+- **HTTP redirects** to move the user between your app and Kratos
+- **HTTP cookies** for anti-CSRF protection and session management
+- **HTML form POST** for submission
+
+Kratos handles all cookie and CSRF logic automatically. Your application only needs to render the form data that Kratos returns.
+
+**Flow lifecycle:**
+
+<Steps>
+
+<Step title="Initialization">
+The browser opens a flow initialization endpoint, for example `/self-service/login/browser`. Kratos creates a flow object, stores it, and HTTP 303 redirects the browser to your configured `ui_url` with the flow ID appended as `?flow=<id>`.
+
+```shell
+curl -s -i -X GET \
+    -H "Accept: text/html" \
+    https://kratos.example.com/self-service/login/browser
+
+# HTTP/2 303
+# location: https://app.example.com/login?flow=3fc63726-8461-43f4-974a-5579ff4174f1
+```
+</Step>
+
+<Step title="Form rendering">
+Your UI endpoint receives the `flow` query parameter and calls the flow information endpoint to retrieve the form data:
+
+```shell
+cookieJar=$(mktemp)
+flowId=$(curl -s -X GET \
+    --cookie-jar $cookieJar --cookie $cookieJar \
+    -H "Accept: application/json" \
+    https://kratos.example.com/self-service/login/browser | jq -r '.id')
+
+curl -s -X GET \
+    --cookie-jar $cookieJar --cookie $cookieJar \
+    -H "Accept: application/json" \
+    "https://kratos.example.com/self-service/login/flows?id=$flowId" | jq
+```
+
+<Warning>
+You must pass the same cookies when calling the flow information endpoint. Calling it without the correct CSRF cookies results in an error.
+</Warning>
+
+The response includes the flow's `ui` object with all form nodes:
+
+```json
+{
+  "id": "33f6079a-ef14-4084-af13-34a91e53cd6c",
+  "type": "browser",
+  "expires_at": "2021-07-09T10:08:08.856735Z",
+  "issued_at": "2021-07-09T09:08:08.856735Z",
+  "ui": {
+    "action": "https://kratos.example.com/self-service/login?flow=33f6079a-ef14-4084-af13-34a91e53cd6c",
+    "method": "POST",
+    "nodes": [
+      {
+        "type": "input",
+        "group": "default",
+        "attributes": {
+          "name": "csrf_token",
+          "type": "hidden",
+          "value": "XmG3qwTY...",
+          "required": true,
+          "disabled": false
+        }
+      },
+      {
+        "type": "input",
+        "group": "password",
+        "attributes": {
+          "name": "identifier",
+          "type": "text",
+          "required": true,
+          "disabled": false
+        },
+        "meta": { "label": { "id": 1070004, "text": "ID", "type": "info" } }
+      }
+    ]
+  }
+}
+```
+</Step>
+
+<Step title="Form submission and validation">
+The user submits the form. The form `action` points directly to Kratos. If validation fails, Kratos returns the updated flow object with error messages attached to the relevant nodes. Your UI fetches the flow again to display the errors.
+
+On success, Kratos redirects the user to `default_browser_return_url` and sets a session cookie.
+</Step>
+
+</Steps>
+
+</Tab>
+
+<Tab title="SPA flows (client-side)">
+
+Single-page application (SPA) flows are used by React.js, Angular, Next.js, Vue, and similar client-side frameworks that use AJAX.
+
+<Info>
+Kratos and your SPA must be hosted on the same top-level domain. For example, `kratos.bar.com` and `ui.bar.com` work; `kratos.bar.com` and `other-domain.com` do not.
+</Info>
+
+Kratos identifies SPA requests by checking for the `Accept: application/json` HTTP header. When detected, flows return JSON directly (no HTTP redirects) while still setting and requiring the necessary CSRF and session cookies.
+
+**Initialization:**
+
+```shell
+curl -v -s -X GET \
+    -H "Accept: application/json" \
+    https://kratos.example.com/self-service/login/browser
+
+# HTTP/2 200
+# content-type: application/json
+# set-cookie: csrf_token=...; HttpOnly; Secure
+```
+
+The response body contains the flow object directly — no redirect. Your app uses this data to render the form, then submits it as `application/json`.
+
+</Tab>
+
+<Tab title="API flows (native apps)">
+
+API flows are used by native mobile apps, desktop apps, CLI tools, Smart TVs, and any client that operates outside a web browser. They do not use cookies or HTTP redirects.
+
+Initialize a flow using the `/api` endpoint:
+
+```shell
+curl -s -X GET \
+    -H "Accept: application/json" \
+    https://kratos.example.com/self-service/login/api | jq
+```
+
+```json
+{
+  "id": "9d17f37b-b60b-44f5-9812-4829a89810f7",
+  "type": "api",
+  "expires_at": "2021-07-09T11:26:04.019418543Z",
+  "issued_at": "2021-07-09T10:26:04.019418543Z",
+  "ui": {
+    "action": "https://kratos.example.com/self-service/login?flow=9d17f37b-b60b-44f5-9812-4829a89810f7",
+    "method": "POST",
+    "nodes": []
+  }
+}
+```
+
+The client receives the flow object immediately and uses it to render a native UI. Submit the completed form as `application/json` to the `ui.action` URL:
+
+```shell
+flow=$(curl -s -X GET -H "Accept: application/json" \
+    "https://kratos.example.com/self-service/login/api")
+actionUrl=$(echo $flow | jq -r '.ui.action')
+
+curl -s -X POST \
+    -H "Accept: application/json" \
+    -H "Content-Type: application/json" \
+    -d '{"identifier": "user@example.com", "password": "my-password", "method": "password"}' \
+    "$actionUrl" | jq
+```
+
+On success, Kratos returns HTTP 200 with a session token in the response body. Store this token and include it as `Authorization: Bearer <token>` in subsequent API requests.
+
+**React Native example:**
+
+```tsx
+import { Configuration, FrontendApi } from '@ory/client'
+
+const kratos = new FrontendApi(
+  new Configuration({ basePath: 'https://kratos.example.com' })
+)
+
+// Initialize a login flow for a native app
+const { data: flow } = await kratos.createNativeSelfServiceLoginFlow()
+
+// Render form fields from flow.ui.nodes, then submit:
+const { data: session } = await kratos.submitSelfServiceLoginFlow({
+  flow: flow.id,
+  submitSelfServiceLoginFlowBody: {
+    method: 'password',
+    identifier: 'user@example.com',
+    password: 'my-password',
+  },
+})
+
+// session.session_token contains the token for future requests
+```
+
+</Tab>
+
+</Tabs>
+
+## UI nodes
+
+Every flow object contains a `ui` field with an `action` URL, an HTTP `method`, and an array of `nodes`. Each node maps to a form element:
+
+```json
+{
+  "type": "input",
+  "group": "password",
+  "attributes": {
+    "name": "identifier",
+    "type": "text",
+    "required": true,
+    "disabled": false,
+    "node_type": "input"
+  },
+  "messages": [],
+  "meta": {
+    "label": { "id": 1070004, "text": "ID", "type": "info" }
+  }
+}
+```
+
+Nodes are grouped by the `group` key:
+
+| Group | Source |
+|---|---|
+| `default` | CSRF token and shared fields |
+| `password` | Username/password method |
+| `oidc` | Social sign-in method |
+| `profile` | Profile update method |
+| `code` | One-time-code method |
+| `totp` | TOTP authenticator method |
+| `webauthn` / `passkey` | WebAuthn / passkey method |
+
+Your UI can filter, reorder, and style nodes using these groups.
+
+## Validation errors
+
+When form submission fails validation, Kratos returns the flow object with error messages attached to the affected nodes. Each message has a stable numeric ID:
+
+```json
+{
+  "type": "input",
+  "group": "password",
+  "attributes": { "name": "identifier", "type": "text" },
+  "messages": [
+    {
+      "id": 4000001,
+      "text": "length must be >= 1, but got 0",
+      "type": "error"
+    }
+  ]
+}
+```
+
+Message IDs follow the pattern `xyyzzzz`:
+- `x`: message type — `1` = info, `4` = validation error, `5` = generic error
+- `yy`: flow module — `01` = login, `04` = registration, `05` = settings, `06` = recovery, `07` = verification
+- `zzzz`: specific message number
+
+Use the stable message ID to translate or customize error messages in your UI without relying on the default English text.
+
+## Flow expiry
+
+All flow objects have an `expires_at` timestamp. If the user does not complete the flow before it expires, Kratos returns an error and the user must restart the flow. The browser is redirected to the [error UI](https://www.ory.sh/docs/kratos/self-service/flows/user-facing-errors) when a system-level error occurs.
+
+## Hooks
+
+Flows support hooks that run after a successful completion. The most commonly used hook is `session`, which automatically signs in the user immediately after registration:
+
+```yaml title="kratos.yml"
+selfservice:
+  flows:
+    registration:
+      after:
+        password:
+          hooks:
+            - hook: session
+```
+
+Removing the `session` hook means users complete registration but are not automatically logged in — they must log in separately.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/kratos/quickstart">
+    See all flows in action with the Docker-based quickstart.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/kratos/configuration">
+    Configure flow URLs, identity schemas, sessions, and courier settings.
+  </Card>
+  <Card title="Bring your own UI" icon="paintbrush" href="https://www.ory.sh/docs/kratos/bring-your-own-ui/custom-ui-overview">
+    Build a fully custom UI using Ory Elements or the raw flow API.
+  </Card>
+  <Card title="SDK reference" icon="code" href="https://www.ory.sh/docs/sdk">
+    Use the Ory SDK to interact with flows in TypeScript, Go, Python, and more.
+  </Card>
+</CardGroup>

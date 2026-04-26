@@ -1,0 +1,159 @@
+---
+title: "Sign-in and registration flows in Ory Identities"
+description: "Understand how Ory login and registration flows work, how to trigger them, and how to verify and manage user sessions with the whoami API."
+---
+
+Ory Identities handles login and registration through **self-service flows** — structured sequences that initialize a flow object, present a UI for user input, and validate the submitted credentials. All flows support browser-based apps (server-side and single-page applications) as well as native clients using API-based flows.
+
+## How flows work
+
+Every self-service flow follows the same three-stage lifecycle:
+
+<Steps>
+  <Step title="Initialize the flow">
+    Your app or the user's browser calls the flow initialization endpoint. Ory creates a flow object with a unique ID, stores it in the database, and sets anti-CSRF cookies.
+
+    For browser apps, Ory responds with an HTTP 303 redirect to your configured UI URL with the `flow` query parameter appended. For SPA or API clients that send `Accept: application/json`, Ory returns the flow object directly as JSON.
+
+    ```bash
+    # Browser-based login initialization
+    GET https://$PROJECT_SLUG.projects.oryapis.com/self-service/login/browser
+
+    # API/native login initialization
+    GET https://$PROJECT_SLUG.projects.oryapis.com/self-service/login/api
+    ```
+  </Step>
+  <Step title="Render the form">
+    Your UI fetches the flow data using the flow ID and renders the appropriate form fields — email, password, social sign-in buttons, and so on.
+
+    ```bash
+    GET https://$PROJECT_SLUG.projects.oryapis.com/self-service/login/flows?id=<flow-id>
+    ```
+
+    The response includes all UI nodes, their types, labels, and any existing validation errors.
+  </Step>
+  <Step title="Submit and validate">
+    The user submits the form. The form action always points directly to Ory. Ory validates the payload and either returns validation errors (so your UI can re-render the form with messages) or completes the flow.
+
+    On success, the login flow sets a session cookie (for browser clients) or returns a session token (for API clients) and redirects to the configured return URL.
+  </Step>
+</Steps>
+
+## Registration flow
+
+The registration flow follows the same three-stage pattern. Trigger it by redirecting to:
+
+```bash
+GET https://$PROJECT_SLUG.projects.oryapis.com/self-service/registration/browser
+```
+
+On success, Ory creates the identity in the database. Depending on your project configuration, it may also issue a session immediately after registration.
+
+## Password-based authentication
+
+Password-based login uses the `password` method. Users enter their identifier (email or username) and their password. Ory checks the credential against the stored bcrypt hash.
+
+The flow UI node for the identifier field uses `"name": "identifier"` and the password field uses `"name": "password"`. Both are required. On submission, include `"method": "password"` to route the request to the password strategy.
+
+```bash
+# Example API flow submission
+curl -s -X POST \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"identifier": "user@example.com", "password": "s3cr3t", "method": "password"}' \
+  "https://$PROJECT_SLUG.projects.oryapis.com/self-service/login?flow=<flow-id>"
+```
+
+<Warning>
+Always send login form submissions directly to Ory, not through your own backend. Routing credentials through your server exposes them unnecessarily.
+</Warning>
+
+## Custom return URL
+
+You can set a `return_to` parameter to redirect users to a specific URL after successful login or registration. The URL must be allow-listed in your project configuration:
+
+```bash
+https://$PROJECT_SLUG.projects.oryapis.com/self-service/login/browser?return_to=https://app.example.com/dashboard
+```
+
+## Session management
+
+After a successful login, Ory issues a session. Browser clients store this as an `ory_session_*` cookie. Native clients receive a session token in the response body.
+
+### Check if a user is logged in
+
+Use the `GET /sessions/whoami` endpoint to verify whether the current user has an active session. This is the standard way to protect server-side routes and API endpoints.
+
+<Tabs>
+  <Tab title="Session cookie (browser)">
+    ```bash
+    curl -H "Cookie: ory_session_...=..." \
+      "https://$PROJECT_SLUG.projects.oryapis.com/sessions/whoami"
+    ```
+  </Tab>
+  <Tab title="Session token (native)">
+    ```bash
+    curl -H "Authorization: Bearer <session-token>" \
+      "https://$PROJECT_SLUG.projects.oryapis.com/sessions/whoami"
+    ```
+  </Tab>
+</Tabs>
+
+A `200 OK` response means the session is active. A `401 Unauthorized` response means there is no active session.
+
+### Session response structure
+
+A successful `whoami` response looks like this:
+
+```json
+{
+  "id": "65dea6f4-5d15-4e61-9eb7-f30190c0b2e2",
+  "active": true,
+  "expires_at": "2022-12-31T13:50:30.427292Z",
+  "authenticated_at": "2022-12-01T13:50:30.825516Z",
+  "authenticator_assurance_level": "aal1",
+  "authentication_methods": [
+    {
+      "method": "password",
+      "aal": "aal1",
+      "completed_at": "2022-12-01T13:50:30.427375604Z"
+    }
+  ],
+  "identity": {
+    "id": "969d7a6e-b8a9-49ea-bf7b-9e2732a41a81",
+    "state": "active",
+    "traits": {
+      "email": "user@example.org",
+      "name": "User"
+    }
+  }
+}
+```
+
+Key fields:
+
+- `active` — `true` when the session is valid and not expired
+- `authenticator_assurance_level` — `aal1` for single-factor, `aal2` for two-factor sessions
+- `authentication_methods` — the list of methods the user completed during this session
+- `identity.traits` — the user's profile data as defined by the identity schema
+
+### Session types
+
+| Client type | Session format | How to send |
+| :---------- | :------------- | :---------- |
+| Browser (SPA, SSR) | Ory Session Cookie | Automatically sent as a cookie |
+| Native (mobile, desktop, CLI) | Ory Session Token | `Authorization: Bearer <token>` header |
+
+<Note>
+You cannot mix session cookies and session tokens. Browser-based apps must use cookies; native apps must use tokens.
+</Note>
+
+## Logout
+
+To log out a browser user, redirect them to:
+
+```bash
+GET https://$PROJECT_SLUG.projects.oryapis.com/self-service/logout/browser
+```
+
+Ory invalidates the session and redirects to the configured post-logout URL.

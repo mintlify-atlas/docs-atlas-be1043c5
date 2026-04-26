@@ -1,0 +1,311 @@
+---
+title: 'Core Ory CLI workflows and command patterns'
+description: 'Learn how to create workspaces and projects, manage identities and OAuth2 clients, configure permissions, and update project settings with the Ory CLI.'
+keywords: ['ory cli basics', 'ory cli commands', 'manage identities', 'oauth2 clients cli', 'project configuration cli']
+---
+
+The Ory CLI lets you manage every aspect of your Ory Network project from the terminal. This page covers the most common workflows: setting up your working context, managing identities and OAuth2 clients, working with permissions, and updating project configuration.
+
+To see all available commands, run:
+
+```bash
+ory help
+```
+
+Every command also accepts `--help` for detailed usage, available flags, and examples:
+
+```bash
+ory create --help
+```
+
+## Create a workspace and project
+
+If you're starting fresh, create a workspace first, then create a project inside it.
+
+**Create a workspace:**
+
+```bash
+ory create workspace --name "My Workspace"
+```
+
+```
+Workspace created successfully!
+ID                 885a2468-c23d-40df-a783-c941387a8701
+NAME               My Workspace
+SUBSCRIPTION PLAN  <none>
+```
+
+Export the workspace ID and create a project:
+
+```bash
+export ORY_WORKSPACE=885a2468-c23d-40df-a783-c941387a8701
+
+ory create project --name "My Project" --workspace $ORY_WORKSPACE
+```
+
+```
+Project created successfully!
+ID           b7d8a15d-a783-40e6-40df-7acd60cb2b64
+NAME         My Project
+ENVIRONMENT  dev
+WORKSPACE    885a2468-c23d-40df-a783-c941387a8701
+SLUG         peaceful-something-4iuafwx2vk
+STATE        running
+```
+
+Set the project as your default so you don't need to pass `--project` to every command:
+
+```bash
+ory use project b7d8a15d-a783-40e6-40df-7acd60cb2b64
+```
+
+## Manage identities
+
+Identities represent users in your Ory project. The CLI provides full CRUD access.
+
+### List identities
+
+```bash
+ory list identities --page-size 50
+```
+
+Use `--consistency strong` when you need the most up-to-date results:
+
+```bash
+ory list identities --page-size 50 --consistency strong
+```
+
+### Get an identity
+
+```bash
+ory get identity $IDENTITY_ID
+```
+
+Output in JSON for scripting:
+
+```bash
+ory get identity $IDENTITY_ID --format json
+```
+
+### Import identities from a file
+
+Prepare a JSON file with an array of identity objects:
+
+```json title="identities.json"
+[
+  {
+    "schema_id": "preset://email",
+    "traits": {
+      "email": "alice@example.com"
+    }
+  },
+  {
+    "schema_id": "preset://email",
+    "traits": {
+      "email": "bob@example.com"
+    }
+  }
+]
+```
+
+Import the file:
+
+```bash
+ory import identities identities.json
+```
+
+You can also pipe identities from stdin:
+
+```bash
+cat identities.json | ory import identities
+```
+
+### Delete an identity
+
+```bash
+ory delete identity $IDENTITY_ID
+```
+
+Delete multiple identities at once:
+
+```bash
+ory delete identity $ID_1 $ID_2 $ID_3
+```
+
+## Manage OAuth2 clients
+
+OAuth2 clients represent applications that use Ory's authorization server.
+
+### Create an OAuth2 client
+
+```bash
+ory create oauth2-client \
+  --name "My App" \
+  --grant-type authorization_code \
+  --grant-type refresh_token \
+  --response-type code \
+  --redirect-uri https://myapp.example.com/callback \
+  --scope "openid email profile offline_access"
+```
+
+To capture the client ID and secret in a script, use `--format json` with `jq`:
+
+```bash
+client=$(ory create oauth2-client \
+  --name "My App" \
+  --grant-type client_credentials \
+  --scope "read:data" \
+  --format json)
+
+client_id=$(echo $client | jq -r '.client_id')
+client_secret=$(echo $client | jq -r '.client_secret')
+```
+
+### List OAuth2 clients
+
+```bash
+ory list oauth2-clients
+```
+
+### Get an OAuth2 client
+
+```bash
+ory get oauth2-client $CLIENT_ID
+```
+
+### Delete an OAuth2 client
+
+```bash
+ory delete oauth2-client $CLIENT_ID
+```
+
+## Manage permissions
+
+The Ory CLI works with relationship tuples and the Ory Permission Language (OPL).
+
+### Create relationship tuples
+
+```bash
+ory create relationships \
+  --namespace files \
+  --object "file:readme" \
+  --relation owner \
+  --subject-id "user:alice"
+```
+
+Or pass relationship definitions as a JSON file:
+
+```bash
+ory create relationships --file relationships.json
+```
+
+### List relationship tuples
+
+```bash
+ory list relationships --namespace files
+```
+
+### Check a permission
+
+```bash
+ory is allowed \
+  --namespace files \
+  --object "file:readme" \
+  --relation read \
+  --subject-id "user:alice"
+```
+
+The command exits with code `0` if the permission is granted, or `1` if it is denied.
+
+### Update the OPL policy
+
+```bash
+ory patch opl --file policy.ts
+```
+
+## Update project configuration
+
+### Overwrite the entire configuration
+
+Create a JSON configuration file and apply it with `ory update project`:
+
+```json title="config.json"
+{
+  "name": "My Project",
+  "services": {
+    "identity": {
+      "config": {
+        "courier": {
+          "smtp": {
+            "from_name": "My App"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+```bash
+ory update project --project $PROJECT_ID --workspace $WORKSPACE_ID --file config.json
+```
+
+### Patch specific configuration keys
+
+Use `ory patch project` with JSON Patch syntax to update individual keys without overwriting the full config:
+
+```bash
+ory patch project \
+  --project $PROJECT_ID \
+  --workspace $WORKSPACE_ID \
+  --replace '/services/identity/config/courier/smtp/from_name="My Custom Sender"'
+```
+
+The value after `=` is interpreted as raw JSON:
+
+| Data type | Example flag |
+|-----------|-------------|
+| String | `--replace '/path/to/key="hello"'` |
+| Boolean | `--replace '/path/to/key=true'` |
+| Number | `--replace '/path/to/key=42'` |
+| Object | `--replace '/path/to/key={"foo":"bar"}'` |
+
+### Retrieve service-specific configuration
+
+```bash
+# Identity service configuration
+ory get identity-config --project $PROJECT_ID
+
+# OAuth2 configuration
+ory get oauth2-config --project $PROJECT_ID
+
+# Permissions configuration
+ory get permission-config --project $PROJECT_ID
+```
+
+## Output formats
+
+All commands support the `--format` flag for machine-readable output:
+
+| Format | Description |
+|--------|-------------|
+| `default` | Human-readable table (default) |
+| `json` | Compact JSON |
+| `json-pretty` | Indented JSON |
+| `yaml` | YAML |
+| `jsonpath` | JSONPath expression result |
+| `jsonpointer` | JSON Pointer result |
+
+```bash
+ory list identities --format json-pretty
+```
+
+## Local development with the tunnel
+
+During local development, use `ory tunnel` to mirror your Ory Network project APIs on `localhost`:
+
+```bash
+ory tunnel --project $PROJECT_ID http://localhost:3000
+```
+
+This routes Ory API traffic through your local machine, allowing session cookies to work correctly across your local app and the Ory Network.

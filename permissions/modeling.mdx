@@ -1,0 +1,213 @@
+---
+title: "Modeling permissions with the Ory Permission Language"
+description: "Define namespaces, relationships, and permission rules in OPL — a TypeScript-based language for expressing RBAC, ABAC, and custom access control models."
+---
+
+A permission model tells Ory Permissions which relationships to look up when evaluating a permission check. You write permission models in the Ory Permission Language (OPL), a subset of TypeScript. Because OPL is just code, you can apply the same design patterns — composition, refactoring, reuse — that you apply in your application logic.
+
+<Tip>
+  Edit your permission rules in the [Ory Console](https://console.ory.sh/) under **Namespaces & Rules** using the built-in editor.
+</Tip>
+
+## How a permission model works
+
+When you ask Ory Permissions "can `User:alice` view `Document:x`?", the engine:
+
+1. Looks up the `view` permission function in the `Document` namespace.
+2. Evaluates that function against the relationships stored for `Document:x`.
+3. Returns `true` or `false`.
+
+Your permission model determines which relationships matter for each permission. No model means no permissions — everything is denied by default.
+
+## Building a permission model step by step
+
+The following example builds a permission model for a document store. The rules are:
+
+- A user can be an `owner`, `editor`, or `viewer` of a document.
+- Owners can also edit, delete, and share.
+- Editors can also view.
+- Documents can live inside folders; if you can view a folder, you can view everything inside it.
+
+<Steps>
+
+<Step title="Identify your namespaces">
+
+Start by listing the types of resources in your application. Each type becomes a namespace — a TypeScript class that implements `Namespace`:
+
+```typescript title="permissions.ts"
+import { Namespace, Context } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+class Document implements Namespace {}
+class Folder implements Namespace {}
+```
+
+Name namespaces in upper camel case and singular form: `Document`, not `documents`.
+
+</Step>
+
+<Step title="Define relationships">
+
+For each namespace that holds resources, declare the relations that subjects can have with objects. Relations are always many-to-many, so use plural names:
+
+```typescript title="permissions.ts"
+import { Namespace, Context } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+
+class Document implements Namespace {
+  related: {
+    owners: User[]
+    editors: User[]
+    viewers: User[]
+    parents: Folder[]
+  }
+}
+
+class Folder implements Namespace {
+  related: {
+    owners: User[]
+    editors: User[]
+    viewers: User[]
+    parents: Folder[]
+  }
+}
+```
+
+The `parents: Folder[]` relation lets you model folder hierarchies. A document whose parent folder is viewed by a user should also be viewable by that user.
+
+</Step>
+
+<Step title="Define permissions">
+
+Permissions are functions inside a `permits` object. Each function receives a `Context` (which contains the requesting subject) and returns a boolean. Functions can reference `this.related` (relationships) and `this.permits` (other permissions):
+
+```typescript title="permissions.ts"
+import { Namespace, Context } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+
+class Document implements Namespace {
+  related: {
+    owners: User[]
+    editors: User[]
+    viewers: User[]
+    parents: Folder[]
+  }
+
+  permits = {
+    view: (ctx: Context): boolean =>
+      this.related.viewers.includes(ctx.subject) ||
+      this.permits.edit(ctx),
+    edit: (ctx: Context): boolean =>
+      this.related.editors.includes(ctx.subject) ||
+      this.permits.share(ctx),
+    delete: (ctx: Context): boolean =>
+      this.permits.share(ctx),
+    share: (ctx: Context): boolean =>
+      this.related.owners.includes(ctx.subject) ||
+      this.related.parents.traverse((parent) => parent.permits.share(ctx)),
+  }
+}
+
+class Folder implements Namespace {
+  related: {
+    owners: User[]
+    editors: User[]
+    viewers: User[]
+    parents: Folder[]
+  }
+
+  permits = {
+    delete: (ctx: Context): boolean =>
+      this.permits.share(ctx),
+    share: (ctx: Context): boolean =>
+      this.related.owners.includes(ctx.subject) ||
+      this.related.parents.traverse((parent) => parent.permits.share(ctx)),
+  }
+}
+```
+
+The `traverse` method walks up the hierarchy of parent folders and evaluates the permission at each level. This lets a single relationship on a parent folder grant access to all its children.
+
+</Step>
+
+<Step title="Test your model">
+
+Create relationships through the API and run check requests to confirm your model behaves as expected. See [Check permissions](/permissions/check-permissions) for how to do this.
+
+For production changes, test on a separate Ory Network project with isolated permission rules before promoting the model.
+
+</Step>
+
+</Steps>
+
+## RBAC example
+
+Role-based access control maps users to roles and roles to permissions. In Ory Permissions, roles are modeled as subject sets — all members of a `Group` automatically inherit the permissions assigned to that group.
+
+The following model supports three roles (`viewer`, `editor`, `admin`) on a `Report` resource:
+
+```typescript title="rbac.ts"
+import { Namespace, Context } from "@ory/keto-namespace-types"
+
+class User implements Namespace {}
+
+class Group implements Namespace {
+  related: {
+    members: User[]
+  }
+}
+
+class Report implements Namespace {
+  related: {
+    viewers: (User | Group)[]
+    editors: (User | Group)[]
+    admins: (User | Group)[]
+  }
+
+  permits = {
+    view: (ctx: Context): boolean =>
+      this.related.viewers.traverse((viewer) => viewer.related?.members?.includes(ctx.subject) ?? viewer === ctx.subject) ||
+      this.permits.edit(ctx),
+    edit: (ctx: Context): boolean =>
+      this.related.editors.traverse((editor) => editor.related?.members?.includes(ctx.subject) ?? editor === ctx.subject) ||
+      this.permits.administer(ctx),
+    administer: (ctx: Context): boolean =>
+      this.related.admins.traverse((admin) => admin.related?.members?.includes(ctx.subject) ?? admin === ctx.subject),
+  }
+}
+```
+
+With this model, you can assign an entire group to a role with a single relationship:
+
+```
+Group:finance#members@User:lila
+Group:finance#members@User:hadley
+Report:q3-results#viewers@Group:finance
+```
+
+Both `lila` and `hadley` can now view the `q3-results` report. Adding a user to the group automatically grants them access — no per-user relationships are needed.
+
+## Naming conventions
+
+| Element | Convention | Example |
+|---|---|---|
+| Namespace | Upper camel case, singular | `Document`, `AccessKey` |
+| Relation | Plural, describes subject-to-object link | `owners`, `members`, `parents` |
+| Permission | Verb, describes the action | `view`, `edit`, `share` |
+
+<Warning>
+  Avoid encoding data inside object or subject identifiers. The characters `:`, `#`, and `@` are reserved by Ory Permissions. Use UUIDs and maintain a separate mapping in your application.
+</Warning>
+
+## OPL syntax reference
+
+| Construct | Purpose |
+|---|---|
+| `class X implements Namespace` | Declares a namespace |
+| `related: { rel: Type[] }` | Declares a relation |
+| `permits = { action: (ctx) => boolean }` | Declares a permission |
+| `this.related.rel.includes(ctx.subject)` | Checks a direct relationship |
+| `this.related.rel.traverse((r) => r.permits.action(ctx))` | Walks a hierarchy |
+| `this.permits.action(ctx)` | Delegates to another permission |

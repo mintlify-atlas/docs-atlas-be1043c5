@@ -1,0 +1,350 @@
+---
+title: "Ory Hydra guides: OAuth2 flows and client management"
+description: "Step-by-step guides for integrating custom login and consent UI, managing OAuth2 clients, refreshing tokens, and revoking access in Ory Hydra."
+keywords: ["ory hydra guides", "oauth2 client", "login consent", "token refresh", "token revocation"]
+---
+
+These guides cover the most common tasks when working with Ory Hydra: wiring up your own login and consent pages, managing OAuth2 clients through the API, and handling the token lifecycle. Each section includes working `curl` examples you can run against the Hydra admin API.
+
+## Custom login and consent UI
+
+Hydra's headless design means it never shows its own login or consent pages. Instead, it redirects to URLs you configure and calls your Hydra admin API to complete or reject each challenge.
+
+### Configure login and consent URLs
+
+Set the URLs Hydra should redirect to when it needs the user to log in or approve access. For self-hosted deployments, configure these in your `hydra.yaml`:
+
+```yaml
+urls:
+  login: https://your-app.example.com/login
+  consent: https://your-app.example.com/consent
+  logout: https://your-app.example.com/logout
+  error: https://your-app.example.com/error
+```
+
+For Ory Network, use the CLI:
+
+```shell
+ory get oauth2-config --project <project-id> --workspace <workspace-id> --format yaml > config.yaml
+# Edit oauth2.urls.login and oauth2.urls.consent, then:
+ory update oauth2-config --project <project-id> --workspace <workspace-id> --file config.yaml
+```
+
+### Handle the login flow
+
+When a user starts an authorization code flow, Hydra redirects them to your login URL with a `login_challenge` query parameter. Your application must:
+
+<Steps>
+  <Step title="Fetch the login request">
+    Call the Hydra admin API with the challenge to retrieve details about the request:
+
+    ```bash
+    curl -X GET 'https://hydra-admin.example.com/admin/oauth2/auth/requests/login?login_challenge=<challenge>'
+    ```
+
+    The response tells you whether the user already has a valid session (`skip: true`) and which OAuth2 client initiated the flow.
+  </Step>
+  <Step title="Authenticate the user">
+    If `skip` is `false`, show your login form and authenticate the user. If `skip` is `true`, you can accept immediately using the existing subject.
+  </Step>
+  <Step title="Accept or reject the challenge">
+    After a successful login, accept the challenge by calling the admin API:
+
+    ```bash
+    curl -X PUT 'https://hydra-admin.example.com/admin/oauth2/auth/requests/login/accept?login_challenge=<challenge>' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "subject": "user-id-123",
+        "remember": true,
+        "remember_for": 3600
+      }'
+    ```
+
+    The response contains a `redirect_to` URL. Redirect the user's browser there to continue the flow.
+
+    To reject the login (wrong credentials, account locked, etc.):
+
+    ```bash
+    curl -X PUT 'https://hydra-admin.example.com/admin/oauth2/auth/requests/login/reject?login_challenge=<challenge>' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "error": "access_denied",
+        "error_description": "The user did not authenticate successfully."
+      }'
+    ```
+  </Step>
+</Steps>
+
+### Handle the consent flow
+
+After login, Hydra redirects to your consent URL with a `consent_challenge` parameter.
+
+<Steps>
+  <Step title="Fetch the consent request">
+    ```bash
+    curl -X GET 'https://hydra-admin.example.com/admin/oauth2/auth/requests/consent?consent_challenge=<challenge>'
+    ```
+
+    The response lists the requested scopes, the OAuth2 client, and the authenticated user.
+  </Step>
+  <Step title="Display the consent screen">
+    Show the user the scopes the client is requesting. You can skip this step and auto-approve if the client is first-party or the user has previously consented (`skip: true`).
+  </Step>
+  <Step title="Accept or reject the consent">
+    Accept consent with the scopes the user approved:
+
+    ```bash
+    curl -X PUT 'https://hydra-admin.example.com/admin/oauth2/auth/requests/consent/accept?consent_challenge=<challenge>' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "grant_scope": ["openid", "offline_access"],
+        "remember": true,
+        "remember_for": 3600,
+        "session": {
+          "id_token": {
+            "email": "user@example.com"
+          }
+        }
+      }'
+    ```
+
+    The response contains a `redirect_to` URL. Redirect the user there to complete the flow and receive tokens.
+  </Step>
+</Steps>
+
+<Tip>
+The [hydra-login-consent-node](https://github.com/ory/hydra-login-consent-node) repository provides a working reference implementation in Node.js that you can use as a starting point.
+</Tip>
+
+---
+
+## Managing OAuth2 clients
+
+OAuth2 clients are applications that request tokens from Hydra. Each client has a `client_id`, optionally a `client_secret`, and a set of allowed grant types, scopes, and redirect URIs.
+
+### Create a client
+
+<Tabs>
+  <Tab title="Ory CLI">
+    ```shell
+    ory create oauth2-client \
+      --grant-type authorization_code,refresh_token \
+      --response-type code \
+      --scope openid,offline_access \
+      --token-endpoint-auth-method client_secret_post \
+      --redirect-uri https://my-app.example.com/callback
+    ```
+  </Tab>
+  <Tab title="cURL (admin API)">
+    ```bash
+    curl -X POST 'https://hydra-admin.example.com/admin/clients' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "client_name": "My Application",
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code", "id_token"],
+        "scope": "openid offline_access",
+        "redirect_uris": ["https://my-app.example.com/callback"],
+        "token_endpoint_auth_method": "client_secret_post"
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+Copy the `client_id` and `client_secret` from the response. The client secret is shown only once.
+
+### Create a machine-to-machine client
+
+For service-to-service communication, use the `client_credentials` grant. No redirect URI is required.
+
+```shell
+ory create oauth2-client \
+  --grant-type client_credentials \
+  --scope my-service:read,my-service:write \
+  --token-endpoint-auth-method client_secret_basic
+```
+
+### Update a client
+
+To update an existing client, replace its entire configuration using `PUT`. Use the `client_id` returned when the client was created:
+
+```bash
+curl -X PUT 'https://hydra-admin.example.com/admin/clients/<client_id>' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "client_id": "<client_id>",
+    "client_name": "My Application (updated)",
+    "grant_types": ["authorization_code", "refresh_token"],
+    "response_types": ["code"],
+    "scope": "openid offline_access profile",
+    "redirect_uris": [
+      "https://my-app.example.com/callback",
+      "https://my-app.example.com/callback-v2"
+    ]
+  }'
+```
+
+### Delete a client
+
+```bash
+curl -X DELETE 'https://hydra-admin.example.com/admin/clients/<client_id>'
+```
+
+### Redirect URI requirements
+
+Redirect URIs must match exactly. Wildcard patterns such as `https://*.example.com/callback` are not supported.
+
+If your CI/CD pipeline creates ephemeral preview environments, update the client's `redirect_uris` programmatically when each environment is deployed, and remove the URI when the environment is torn down:
+
+```shell
+# Add a preview URI when the environment is created
+ory update oauth2-client <client_id> \
+  --redirect-uri https://preview-123.example.com/callback
+
+# Remove it when the environment is destroyed
+ory update oauth2-client <client_id> \
+  --redirect-uri https://my-app.example.com/callback
+```
+
+---
+
+## Token refresh
+
+When a client obtains a refresh token (by requesting the `offline_access` or `offline` scope), it can exchange it for a new access token without requiring the user to log in again.
+
+```bash
+curl -X POST 'https://hydra-public.example.com/oauth2/token' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'grant_type=refresh_token' \
+  --data-urlencode 'refresh_token=<your_refresh_token>' \
+  --data-urlencode 'client_id=<client_id>' \
+  --data-urlencode 'client_secret=<client_secret>'
+```
+
+The response contains a new `access_token` and, if refresh token rotation is enabled, a new `refresh_token`. The old refresh token is immediately invalidated.
+
+### Graceful token rotation
+
+Graceful refresh token rotation lets a refresh token remain valid for a short grace period so that distributed systems or mobile applications with unreliable networks can retry a refresh without being locked out.
+
+To enable it for a 60-second grace period with a maximum of 3 reuses:
+
+```shell
+ory patch oauth2-config --project <project-id> --workspace <workspace-id> \
+  --replace '/oauth2/grant/refresh_token/rotation_grace_period="60s"' \
+  --replace '/oauth2/grant/refresh_token/rotation_grace_reuse_count=3'
+```
+
+For self-hosted deployments, configure it in `hydra.yaml`:
+
+```yaml
+oauth2:
+  grant:
+    refresh_token:
+      rotation_grace_period: 60s
+      rotation_grace_reuse_count: 3
+```
+
+<Warning>
+If a refresh token is used after the grace period ends, or more times than `rotation_grace_reuse_count` allows, Hydra treats it as token theft and revokes the entire token chain, including all associated access tokens.
+</Warning>
+
+---
+
+## Token revocation
+
+You can revoke access tokens and refresh tokens at any time. Revoking a refresh token also invalidates all access tokens derived from it.
+
+```bash
+curl -X POST 'https://hydra-public.example.com/oauth2/revoke' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'token=<token_to_revoke>' \
+  --data-urlencode 'client_id=<client_id>' \
+  --data-urlencode 'client_secret=<client_secret>'
+```
+
+---
+
+## Token introspection
+
+Resource servers use token introspection to verify that an access token is valid and to retrieve associated metadata such as the subject, scopes, and expiration time.
+
+```bash
+curl -X POST 'https://hydra-admin.example.com/admin/oauth2/introspect' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'token=<access_token>'
+```
+
+Example response:
+
+```json
+{
+  "active": true,
+  "client_id": "my-client",
+  "sub": "user-id-123",
+  "scope": "openid offline_access",
+  "iss": "https://hydra-public.example.com",
+  "exp": 1700000000,
+  "iat": 1699996400,
+  "token_type": "Bearer",
+  "token_use": "access_token"
+}
+```
+
+<Warning>
+The token introspection endpoint is on the **admin** port (default 4445). Do not expose it to the public internet. Use it only from trusted internal services.
+</Warning>
+
+---
+
+## Common OAuth2 flows
+
+### Authorization code flow
+
+This is the standard flow for user-facing applications.
+
+<Steps>
+  <Step title="Create a client">
+    ```shell
+    hydra create client \
+      --endpoint http://hydra-admin:4445 \
+      --grant-type authorization_code,refresh_token \
+      --response-type code \
+      --scope openid,offline_access \
+      --redirect-uri https://my-app.example.com/callback
+    ```
+  </Step>
+  <Step title="Redirect the user to the authorization endpoint">
+    ```html
+    <a href="https://hydra-public:4444/oauth2/auth?client_id=<client_id>&scope=openid+offline_access&redirect_uri=https://my-app.example.com/callback&response_type=code&state=<random_state>">
+      Connect with ...
+    </a>
+    ```
+  </Step>
+  <Step title="Exchange the authorization code for tokens">
+    After the user completes login and consent, Hydra redirects to your `redirect_uri` with a `code` parameter. Exchange it for tokens:
+
+    ```bash
+    curl -X POST 'https://hydra-public:4444/oauth2/token' \
+      -H 'Content-Type: application/x-www-form-urlencoded' \
+      --data-urlencode 'grant_type=authorization_code' \
+      --data-urlencode 'code=<authorization_code>' \
+      --data-urlencode 'redirect_uri=https://my-app.example.com/callback' \
+      --data-urlencode 'client_id=<client_id>' \
+      --data-urlencode 'client_secret=<client_secret>'
+    ```
+  </Step>
+</Steps>
+
+### Client credentials flow
+
+For machine-to-machine calls where no user is involved:
+
+```bash
+curl -X POST 'https://hydra-public:4444/oauth2/token' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'grant_type=client_credentials' \
+  --data-urlencode 'client_id=<client_id>' \
+  --data-urlencode 'client_secret=<client_secret>' \
+  --data-urlencode 'scope=my-service:read'
+```

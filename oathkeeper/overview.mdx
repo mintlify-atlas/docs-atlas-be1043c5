@@ -1,0 +1,60 @@
+---
+title: "Ory Oathkeeper: Identity and Access Proxy"
+description: "Learn how Ory Oathkeeper implements zero-trust networking as a reverse proxy and policy decision point that authenticates every HTTP request."
+keywords: ["oathkeeper", "identity and access proxy", "zero trust", "reverse proxy", "policy decision point", "access rules"]
+---
+
+Ory Oathkeeper is an Identity and Access Proxy (IAP) that authorizes incoming HTTP requests. You can deploy it as a reverse proxy in front of your APIs and services, where it rejects unauthorized requests and forwards authorized ones upstream. If you already use an API gateway such as Kong, Nginx, Envoy, or AWS API Gateway, Oathkeeper can plug in as the Policy Decision Point for that gateway instead.
+
+Oathkeeper implements the [Zero-Trust Network Architecture](https://www.beyondcorp.com) (also known as BeyondCorp) model: every request is authenticated and authorized regardless of network location. Nothing is trusted by default, and credentials are validated on every hop.
+
+## Zero-trust networking
+
+Traditional perimeter-based security assumes that traffic inside a network boundary is trusted. Zero-trust rejects that assumption. With Oathkeeper enforcing access rules at the proxy layer, your backend services receive only authenticated, authorized requests with verified identity information attached—whether the caller is a human user, a machine, or a service.
+
+<Note>
+Ory Oathkeeper has no external dependencies and requires no database. It is configured entirely through YAML files and environment variables, making it straightforward to run in any environment.
+</Note>
+
+## How Oathkeeper works
+
+Every incoming HTTP request passes through Oathkeeper's decision engine in four sequential steps:
+
+1. **Access rule matching** — Oathkeeper checks the request method, path, scheme, and host against your configured access rules. If no rule matches, the request is denied. Oathkeeper reads these values from the request URL or from `X-Forwarded-*` headers if they are present.
+2. **Authentication** — The matching rule specifies one or more authenticators that validate the credentials in the request (for example, a Bearer token, session cookie, or OAuth 2.0 token). Invalid credentials result in denial.
+3. **Authorization** — The matching rule specifies an authorizer that checks whether the authenticated subject has permission to access the resource. A failed permission check denies the request.
+4. **Mutation** — The matching rule specifies mutators that transform the request before forwarding it upstream. For example, a mutator can replace a Bearer token with an `X-User-ID` header, or generate a signed JWT containing session claims.
+
+If any step fails, Oathkeeper delegates error handling to the configured error handlers, which can return a JSON response, issue an HTTP redirect, or trigger a `WWW-Authenticate` challenge depending on the client type.
+
+## Operating modes
+
+Oathkeeper exposes two ports when you run `oathkeeper serve`:
+
+**Reverse proxy** (default port `4455`) — Oathkeeper sits in front of your upstream service. Allowed requests are forwarded; denied requests receive an error response directly from Oathkeeper.
+
+**Access Control Decision API** (default port `4456`) — Oathkeeper acts as an external authorization endpoint. Your existing API gateway sends requests to the `/decisions` path, and Oathkeeper responds with `200 OK` (allowed) or an error status (denied), optionally including mutated headers that the gateway can forward upstream.
+
+## Use cases
+
+- **API gateway enforcement** — Attach Oathkeeper to Envoy, Nginx, Kong, or AWS API Gateway via their external authorization extension to centralize access control decisions.
+- **Reverse proxy for microservices** — Place Oathkeeper in front of internal services to ensure every call carries verified identity, eliminating the need for each service to implement its own auth logic.
+- **JWT mutation** — Accept any credential type (Basic auth, session cookie, OAuth 2.0 token) and issue a signed JWT downstream, giving your backends a uniform identity signal to verify.
+- **Anonymous access with identity propagation** — Allow unauthenticated requests while still forwarding a subject identifier (for example `guest`) so your upstream can track or rate-limit anonymous activity.
+
+## Integration with the Ory ecosystem
+
+Oathkeeper works as a standalone component and also integrates naturally with other Ory projects:
+
+- **Ory Hydra** — Use the `oauth2_introspection` authenticator to validate access tokens issued by Ory Hydra.
+- **Ory Keto** — Use the `keto_engine_acp_ory` authorizer to delegate permission checks to Ory Keto's policy engine.
+- **Ory Kratos** — Use the `cookie_session` authenticator with Kratos's session check endpoint to validate browser sessions.
+
+<CardGroup cols={2}>
+  <Card title="Request pipeline" icon="arrow-right-arrow-left" href="/oathkeeper/pipeline">
+    Understand authenticators, authorizers, mutators, error handlers, and access rule structure.
+  </Card>
+  <Card title="Configure and deploy" icon="server" href="/oathkeeper/configure-deploy">
+    Set up Oathkeeper with Docker, define access rules, and integrate with Prometheus.
+  </Card>
+</CardGroup>

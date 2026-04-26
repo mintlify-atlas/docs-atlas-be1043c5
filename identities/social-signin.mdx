@@ -1,0 +1,158 @@
+---
+title: "Social sign-in with OAuth2 and OIDC providers in Ory"
+description: "Add Google, GitHub, Microsoft, and other social sign-in providers to Ory Identities via OAuth2 and OIDC. Covers console setup, user flow, and account linking."
+---
+
+Social sign-in lets users authenticate with your application using their existing accounts from providers such as Google, GitHub, or Microsoft, instead of creating and remembering another set of credentials. Ory Identities implements social sign-in via the OpenID Connect (OIDC) and OAuth2 protocols and ships pre-configured connectors for more than 15 providers out of the box.
+
+When a user signs in with a social provider for the first time, Ory creates a new identity using the profile data returned by the provider. On subsequent logins, Ory matches the returning user to their existing identity.
+
+## Supported providers
+
+Ory ships ready-to-use connectors for the following providers, among others:
+
+Google, GitHub, Microsoft, Facebook, Apple, GitLab, Auth0, Salesforce, Slack, Spotify, Discord, Twitch, LinkedIn, X (Twitter), Amazon, LINE, and more. You can also connect any OpenID Connect-compliant provider using the generic OIDC integration.
+
+## Configure social sign-in
+
+### Step 1: Obtain credentials from your provider
+
+Before configuring Ory, create an OAuth2 application in your chosen provider's developer console. You need:
+
+- A **Client ID**
+- A **Client Secret**
+- The ability to register an **authorized redirect URI**
+
+The redirect URI to register with your provider is:
+
+```
+https://$PROJECT_SLUG.projects.oryapis.com/self-service/methods/oidc/callback/<provider-id>
+```
+
+### Step 2: Enable the OIDC method in Ory
+
+<Tabs>
+  <Tab title="Ory Console">
+    <Steps>
+      <Step title="Open social sign-in settings">
+        Log in to the [Ory Console](https://console.ory.sh/), select your project, and navigate to **Authentication** > **Social Sign-In (OIDC)**.
+      </Step>
+      <Step title="Enable OpenID Connect">
+        Toggle **Enable OpenID Connect** to on.
+      </Step>
+      <Step title="Set the base redirect URI">
+        Enter the URL of your application that handles post-authentication redirects.
+      </Step>
+      <Step title="Add a provider">
+        Click **Add new OpenID Connect provider** and select your provider from the list.
+      </Step>
+      <Step title="Configure the provider">
+        Enter the **Client ID** and **Client Secret** you obtained from the provider's developer console. For some providers, you may also need to configure requested scopes.
+      </Step>
+      <Step title="Save">
+        Click **Save** to apply the configuration.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Ory CLI">
+    ```shell
+    # Fetch your current identity configuration
+    ory get identity-config \
+      --project <project-id> \
+      --workspace <workspace-id> \
+      --format yaml > identity-config.yaml
+    ```
+
+    Add the OIDC method and provider configuration to `identity-config.yaml`:
+
+    ```yaml
+    selfservice:
+      methods:
+        oidc:
+          enabled: true
+          config:
+            base_redirect_uri: https://app.example.com
+            providers:
+              - id: google
+                provider: google
+                label: Google
+                client_id: "YOUR_GOOGLE_CLIENT_ID"
+                client_secret: "YOUR_GOOGLE_CLIENT_SECRET"
+                scope:
+                  - email
+                  - profile
+              - id: github
+                provider: github
+                label: GitHub
+                client_id: "YOUR_GITHUB_CLIENT_ID"
+                client_secret: "YOUR_GITHUB_CLIENT_SECRET"
+                scope:
+                  - user:email
+    ```
+
+    ```shell
+    ory update identity-config \
+      --project <project-id> \
+      --workspace <workspace-id> \
+      --file identity-config.yaml
+    ```
+  </Tab>
+</Tabs>
+
+## How the social sign-in flow works
+
+Once you have configured a provider, the login and registration UI automatically displays a button for each enabled provider. The user flow proceeds as follows:
+
+<Steps>
+  <Step title="User selects a provider">
+    On the login or registration page, the user clicks the button for their chosen provider (for example, **Sign in with Google**).
+  </Step>
+  <Step title="Redirect to the provider">
+    Ory redirects the user to the provider's authentication page. The user authenticates with the provider using the provider's own interface.
+  </Step>
+  <Step title="Provider redirects back to Ory">
+    After the user authenticates with the provider, the provider redirects back to Ory with an authorization code. Ory exchanges the code for an access token and retrieves the user's profile.
+  </Step>
+  <Step title="Account creation or login">
+    If this is the user's first time using this provider with your application, Ory creates a new identity using the profile data. If the user has signed in before, Ory logs them in to the existing identity and creates a session.
+  </Step>
+  <Step title="Redirect to your app">
+    The user is redirected back to your application with an active session.
+  </Step>
+</Steps>
+
+## Account linking
+
+Users can link multiple social providers to a single Ory identity, as well as link a social provider to an account originally created with a password. This means a user who signed up with their email and password can later also sign in with Google, and both methods will resolve to the same account.
+
+Account linking is managed through the **Settings** self-service flow. Users navigate to their account settings and connect or disconnect social providers.
+
+<Note>
+Automatic account linking — where Ory silently merges a social sign-in with an existing email/password account based on a matching email address — is disabled by default for security reasons. You can enable it in your project configuration, but review the security implications carefully before doing so.
+</Note>
+
+## Data mapping
+
+When a user signs in with a social provider, Ory receives profile data from the provider (such as email, name, and profile picture). You can use **data mapping** (Jsonnet templates) to transform this data and map it to your identity schema's traits.
+
+For example, to map the `email` field from a Google profile to the `email` trait in your identity schema:
+
+```jsonnet
+local claims = std.extVar('claims');
+
+{
+  identity: {
+    traits: {
+      email: claims.email,
+    },
+  },
+}
+```
+
+Configure the mapper by setting the `mapper_url` field on the provider configuration to the URL or inline base64-encoded Jsonnet of your mapping template.
+
+## Token access
+
+After a user authenticates with a social provider, Ory can make the provider's access token available to your application. This lets you call the provider's APIs on behalf of the user — for example, to read their GitHub repositories or Google Calendar.
+
+The tokens are stored on the identity and can be retrieved via the Ory admin API.

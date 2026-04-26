@@ -1,0 +1,159 @@
+---
+title: 'Install and authenticate the Ory CLI'
+description: 'Install the Ory CLI on macOS, Linux, or Windows using npm, Homebrew, Docker, or a binary download, then authenticate with your Ory Network project.'
+keywords: ['ory cli install', 'ory cli authentication', 'homebrew', 'npm', 'docker', 'binary install']
+---
+
+The Ory CLI is the primary command-line interface for managing Ory Network projects. You can use it to create and configure projects, manage identities and OAuth2 clients, control permissions, run a local development tunnel, and move configurations between self-hosted and Ory Network deployments.
+
+## Install the Ory CLI
+
+Choose the installation method that fits your environment.
+
+<Tabs>
+  <Tab title="npm">
+    Install the Ory CLI globally using npm:
+
+    ```bash
+    npm install --global @ory/cli
+    ```
+
+    Verify the installation:
+
+    ```bash
+    ory version
+    ```
+  </Tab>
+  <Tab title="Homebrew (macOS / Linux)">
+    Install using the Ory Homebrew tap:
+
+    ```bash
+    brew install ory/tap/cli
+    ```
+
+    Verify the installation:
+
+    ```bash
+    ory version
+    ```
+  </Tab>
+  <Tab title="Docker">
+    Pull the official Ory CLI Docker image:
+
+    ```bash
+    docker pull oryd/ory
+    ```
+
+    Run a CLI command inside the container:
+
+    ```bash
+    docker run --rm -it oryd/ory help
+    ```
+  </Tab>
+  <Tab title="Binary">
+    Download the pre-built binary for your platform from the [Ory CLI GitHub releases page](https://github.com/ory/cli/releases).
+
+    After downloading, move the binary to a directory in your `$PATH`:
+
+    ```bash
+    # Example for Linux / macOS
+    mv ory /usr/local/bin/ory
+    chmod +x /usr/local/bin/ory
+    ```
+
+    Verify the installation:
+
+    ```bash
+    ory version
+    ```
+  </Tab>
+</Tabs>
+
+## Authenticate with your Ory Network account
+
+Before you can manage projects from the CLI, you need to authenticate. The CLI supports two authentication methods depending on whether you're working interactively or in an automated environment.
+
+### Browser-based login
+
+For interactive use, authenticate with your Ory account through the browser:
+
+```bash
+ory auth
+```
+
+The CLI opens a browser window where you log in to your Ory Network account using the OAuth2 authorization code flow. After you log in, the CLI stores a session token locally for subsequent commands.
+
+### API key authentication
+
+For CI/CD pipelines and automated scripts, use environment variables to authenticate without a browser.
+
+Ory supports two types of API keys depending on the operations you need:
+
+- **Workspace API key** (`ory_wak_` prefix) — manages project configurations, workspaces, and members
+- **Project API key** (`ory_apikey_` or `ory_pat_` prefix) — manages project data such as identities, sessions, and OAuth2 clients
+
+Set the appropriate environment variables:
+
+```bash
+export ORY_WORKSPACE_API_KEY=ory_wak_8dwW9s....
+export ORY_PROJECT_API_KEY=ory_apikey_Wse93s....
+```
+
+<Warning>
+Never hard-code API keys in scripts or commit them to source control. Use a secrets manager or your CI/CD platform's secret store to inject these values at runtime.
+</Warning>
+
+### Creating API keys in the Ory Console
+
+<Steps>
+  <Step title="Open the Ory Console">
+    Go to [console.ory.sh](https://console.ory.sh/) and select your project.
+  </Step>
+  <Step title="Navigate to Developers">
+    Click **Developers** in the left sidebar.
+  </Step>
+  <Step title="Create a new API key">
+    Click **Create new API key**, enter a descriptive name, and set an expiration date.
+  </Step>
+  <Step title="Copy the key">
+    The key is shown only once. Copy it and store it securely before closing the dialog.
+  </Step>
+</Steps>
+
+## Set the working context
+
+Most CLI commands need to know which workspace and project to operate on. You can specify this in three ways:
+
+**Flags on each command:**
+
+```bash
+ory list identities --project $PROJECT_ID --workspace $WORKSPACE_ID
+```
+
+**Environment variables:**
+
+```bash
+export ORY_PROJECT=your-project-id
+export ORY_WORKSPACE=your-workspace-id
+```
+
+**Saved defaults using `ory use`:**
+
+```bash
+ory use workspace $WORKSPACE_ID
+ory use project $PROJECT_ID
+```
+
+Once set, commands use the saved defaults unless you override them with flags.
+
+<Tip>
+Projects created before workspaces were introduced do not require the `--workspace` flag. Omit it when working with legacy standalone projects.
+</Tip>
+
+## Sign out
+
+To remove the stored session from your local machine:
+
+```bash
+ory auth logout
+```

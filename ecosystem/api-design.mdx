@@ -1,0 +1,152 @@
+---
+title: 'Ory API design principles and conventions'
+description: 'Explore the RESTful conventions, date formats, pagination model, error response structure, and SDK generation strategy that underpin all Ory APIs.'
+keywords: ['ory api design', 'rest conventions', 'pagination', 'error format', 'ory sdk', 'api guidelines']
+---
+
+All Ory APIs share a consistent design. Understanding the conventions described on this page helps you build reliable integrations, handle errors correctly, and paginate through large result sets without surprises.
+
+## RESTful conventions
+
+Ory APIs follow standard RESTful conventions:
+
+- **HTTP methods** map to operations: `GET` to read, `POST` to create, `PUT` to replace, `PATCH` to partially update, `DELETE` to remove.
+- **Resource paths** use nouns in plural form (for example, `/admin/identities`, `/admin/clients`).
+- **Status codes** follow HTTP semantics: `200` for success, `201` for created resources, `204` for successful deletes with no body, `4xx` for client errors, `5xx` for server errors.
+- **Request and response bodies** are JSON. Set `Content-Type: application/json` on requests that include a body.
+
+<Tip>
+The full design guidelines that govern Ory's internal API development are published on the [Ory GitHub repository](https://github.com/ory/docs).
+</Tip>
+
+## Date format
+
+All timestamps in Ory API requests and responses use [RFC 3339](https://tools.ietf.org/html/rfc3339) format:
+
+```json
+{
+  "created_at": "2006-01-02T15:04:05+07:00"
+}
+```
+
+Always parse timestamps with an RFC 3339-compliant library rather than hand-rolling string parsing, since the timezone offset can vary.
+
+## Pagination
+
+Endpoints that return collections support cursor-based pagination through the `Link` HTTP response header. You control page size with the `page_size` query parameter.
+
+### Reading the Link header
+
+The `Link` header contains comma-delimited links to navigate pages:
+
+- `rel="first"` — the first page of results (always present)
+- `rel="next"` — the next page of results (absent on the last page)
+
+**First request**
+
+```http
+GET /admin/clients?page_size=5 HTTP/1.1
+Host: {project-slug}.projects.oryapis.com
+Authorization: Bearer $ORY_API_KEY
+```
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Link: </admin/clients?page_size=5&page_token=euKoY1BqY3J8GVax>; rel="first",
+      </admin/clients?page_size=5&page_token=h9LfEKUiFoLH2R0A>; rel="next"
+```
+
+**Following the next page**
+
+Extract the path from the `rel="next"` link and request it:
+
+```http
+GET /admin/clients?page_size=5&page_token=h9LfEKUiFoLH2R0A HTTP/1.1
+Host: {project-slug}.projects.oryapis.com
+Authorization: Bearer $ORY_API_KEY
+```
+
+**Last page** — when there are no more results, only `rel="first"` appears:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Link: </admin/clients?page_size=5&page_token=euKoY1BqY3J8GVax>; rel="first"
+```
+
+<Note>
+Not all endpoints support pagination. Only endpoints explicitly documented as paginated return a `Link` header.
+</Note>
+
+## Error response format
+
+Error responses carry a JSON body with a structured `error` object:
+
+```json
+{
+  "error": {
+    "code": 404,
+    "status": "Not Found",
+    "message": "Identity could not be found.",
+    "reason": "The identity with the given ID does not exist in this project.",
+    "id": "identity_not_found"
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `code` | HTTP status code |
+| `status` | HTTP status text |
+| `message` | Human-readable error message |
+| `reason` | Additional context (optional) |
+| `id` | Machine-readable error identifier (optional) |
+| `details` | Array of additional detail objects (optional) |
+
+Use the `id` field in your error handling logic rather than matching on `message`, since messages may change between releases.
+
+## Consistency model
+
+List endpoints on the identity API support a `consistency` query parameter:
+
+- `eventual` (default) — faster reads that may not reflect the last ~5 seconds of writes. Use this for high-throughput reads.
+- `strong` — guaranteed to reflect all committed writes. Use this when you need up-to-date data immediately after a write.
+
+## SDKs
+
+Ory generates SDKs directly from the OpenAPI specification, so all SDK methods map 1:1 to API endpoints. SDKs are available for the following languages:
+
+<CardGroup cols={2}>
+  <Card title="Go" icon="code" href="https://github.com/ory/client-go">
+    `github.com/ory/client-go`
+  </Card>
+  <Card title="TypeScript / JavaScript" icon="code" href="https://github.com/ory/client-typescript">
+    `@ory/client`
+  </Card>
+  <Card title="Python" icon="code" href="https://github.com/ory/client-python">
+    `ory-client`
+  </Card>
+  <Card title="PHP" icon="code" href="https://github.com/ory/client-php">
+    `ory/client`
+  </Card>
+  <Card title="Java" icon="code" href="https://github.com/ory/client-java">
+    Maven: `sh.ory/ory-client`
+  </Card>
+  <Card title=".NET" icon="code" href="https://github.com/ory/client-dotnet">
+    NuGet: `Ory.Client`
+  </Card>
+</CardGroup>
+
+### Ory Network SDK vs. service-specific SDKs
+
+| SDK type | Target deployment | Package |
+|----------|------------------|---------|
+| Ory Network SDK (`ory_client`) | Ory Network | Single unified client |
+| Service-specific SDKs | Self-hosted | One client per product (Kratos, Hydra, Keto, Oathkeeper) |
+
+Use the **Ory Network SDK** for all Ory Network integrations. The service-specific SDKs point to self-hosted endpoints and are not compatible with the Ory Network API surface.
+
+<Info>
+The SDK source code and per-language READMEs are maintained in the [ory/sdk](https://github.com/ory/sdk) repository.
+</Info>

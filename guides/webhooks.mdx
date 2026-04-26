@@ -1,0 +1,262 @@
+---
+title: "Extend Ory with webhooks using Ory Actions"
+description: "Trigger HTTP callbacks on identity events, customize payloads with Jsonnet, handle responses to modify identities, and integrate with third-party services."
+keywords: ["webhooks", "Ory Actions", "HTTP callbacks", "Jsonnet", "identity events", "registration hook", "CRM integration"]
+---
+
+Ory Actions lets you attach HTTP webhooks to identity lifecycle events such as user registration, login, and profile updates. When one of these events occurs, Ory sends an HTTP request to a URL you control, where you can run custom business logic or fan out to third-party services like a CRM, email platform, or analytics tool.
+
+## When to use webhooks
+
+<CardGroup cols={2}>
+  <Card title="Third-party integrations" icon="plug">
+    Sync user data to HubSpot, Mailchimp, Segment, or any other platform whenever a user registers or updates their profile.
+  </Card>
+  <Card title="Automated workflows" icon="bolt">
+    Trigger downstream processes — provision resources, send welcome emails, assign roles — immediately after identity events.
+  </Card>
+  <Card title="Identity enrichment" icon="user-pen">
+    Modify identity traits, metadata, or external IDs from your webhook response before the identity is saved.
+  </Card>
+  <Card title="Flow gating" icon="shield-check">
+    Return an error from your webhook endpoint to interrupt a registration or settings flow and surface a validation message to the user.
+  </Card>
+</CardGroup>
+
+<Warning>
+  Always protect sensitive data in transit. Verify that any external system you integrate with is trustworthy, and review the data privacy regulations that apply to your use case before forwarding identity data to third parties.
+</Warning>
+
+## Create an action in the Ory Console
+
+<Steps>
+  <Step title="Open the Actions page">
+    In the [Ory Console](https://console.ory.sh), go to **Your project → Developers → Actions** and click **+ Create new Action**.
+  </Step>
+  <Step title="Choose the flow and execution time">
+    Select the flow type (for example, **Registration**) and whether the hook should run **before** or **after** the flow completes. Provide the target URL and HTTP method.
+  </Step>
+  <Step title="Configure authentication and request body">
+    On the next screen, set up authentication for your endpoint (API key or basic auth) and define the Jsonnet template for the request body.
+  </Step>
+  <Step title="Save the action">
+    Click **Save action**. The webhook is now active and will fire on the next matching event.
+  </Step>
+</Steps>
+
+## Configuration reference
+
+The full webhook configuration in YAML:
+
+```yaml
+hook: web_hook
+config:
+  url: https://your-service.example.com/hooks/ory
+  method: POST
+  body: base64://ENCODED_JSONNET_TEMPLATE
+  response:
+    ignore: false  # true = fire-and-forget (async)
+    parse: false   # true = use response to modify identity or interrupt flow
+  auth:
+    type: api_key  # or basic_auth
+    config:
+      name: Authorization
+      value: YOUR_API_KEY
+      in: header   # or cookie
+```
+
+## Customize the request body with Jsonnet
+
+Ory uses [Jsonnet](https://jsonnet.org) templates to build the webhook payload. The template receives a `ctx` object containing the flow, request metadata, and (for `after` hooks) the identity.
+
+A minimal template that sends the user's ID and email:
+
+```jsonnet
+function(ctx) {
+  user_id: ctx.identity.id,
+  email: ctx.identity.traits.email,
+}
+```
+
+A richer example that also forwards a transient value passed from your registration form:
+
+```jsonnet title="actions-payload/registration.jsonnet"
+function(ctx) {
+  userId: ctx.identity.id,
+  traits: {
+    email: ctx.identity.traits.email,
+    name: ctx.identity.traits.name,
+  },
+  newsletterConsent: ctx.identity.traits.consent.newsletter,
+  customData: ctx.flow.transient_payload.custom_data,
+}
+```
+
+The following fields are always available in `ctx`:
+
+| Field | Available | Description |
+|---|---|---|
+| `ctx.flow` | Before and after | The Ory flow object |
+| `ctx.request_headers` | Before and after | Filtered set of request headers |
+| `ctx.request_method` | Before and after | HTTP method of the originating request |
+| `ctx.request_url` | Before and after | URL of the originating request |
+| `ctx.identity` | After hooks only | The identity involved in the flow |
+| `ctx.flow.transient_payload` | After hooks only | Custom data passed from your UI |
+
+<Tip>
+  To encode a Jsonnet file to base64 for use in the `body` field, run: `base64 < my-template.jsonnet`
+</Tip>
+
+### Cancel a webhook conditionally
+
+You can cancel a webhook by raising an error in the Jsonnet template. This is useful during testing to prevent test accounts from being synced to production systems:
+
+```jsonnet
+function(ctx)
+  if std.startsWith(ctx.identity.traits.email, "test-") then
+    error "cancel"
+  else
+    {
+      user_id: ctx.identity.id,
+    }
+```
+
+## Request authentication
+
+<CodeGroup>
+
+```yaml API key authentication
+hook: web_hook
+config:
+  auth:
+    type: api_key
+    config:
+      name: Authorization
+      value: YOUR_API_KEY
+      in: header
+```
+
+```yaml Basic authentication
+hook: web_hook
+config:
+  auth:
+    type: basic_auth
+    config:
+      user: YOUR_USERNAME
+      password: YOUR_PASSWORD
+```
+
+</CodeGroup>
+
+## Handle webhook responses
+
+### Fire-and-forget (async)
+
+Set `response.ignore: true` when you don't need to act on the response — for example, when adding a user to a newsletter:
+
+```yaml
+config:
+  response:
+    ignore: true
+```
+
+### Modify an identity from the response
+
+Set `response.parse: true` and return a JSON object with an `identity` key. Ory replaces the identity fields with the values you return before saving to the database. This is only possible during **registration** and **settings** flows.
+
+<Warning>
+  The entire field is replaced, not merged. Always include all existing traits in your response or data will be lost.
+</Warning>
+
+```json title="Correct webhook response (include all traits)"
+{
+  "identity": {
+    "traits": {
+      "email": "joe@example.org",
+      "plan": "pro"
+    },
+    "metadata_public": {
+      "crm_id": "hs_12345"
+    }
+  }
+}
+```
+
+You can update the following fields from a webhook response:
+
+| Response key | Effect |
+|---|---|
+| `identity.traits` | Replaces all identity traits |
+| `identity.metadata_public` | Replaces public metadata |
+| `identity.metadata_admin` | Replaces admin metadata |
+| `identity.verifiable_addresses` | Replaces verification addresses |
+| `identity.recovery_addresses` | Replaces recovery addresses |
+| `identity.external_id` | Replaces the external ID |
+
+### Interrupt a flow
+
+If `response.parse: true` and your endpoint returns an HTTP `4xx` or `5xx` status, Ory interrupts the flow and surfaces the error messages to the user:
+
+```json
+{
+  "messages": [
+    {
+      "instance_ptr": "#/traits/email",
+      "messages": [
+        {
+          "id": 1001,
+          "text": "This email domain is not allowed.",
+          "type": "error"
+        }
+      ]
+    }
+  ]
+}
+```
+
+For HTTP `1xx`–`3xx` responses, the flow continues normally.
+
+## Retry policy
+
+If your endpoint is unavailable or returns an error, Ory Network retries the request up to **three times** with a **30-second delay** between attempts.
+
+## IP allowlist
+
+Ory Network egress traffic originates from a fixed set of IP addresses. Configure your firewall to allow inbound requests from these IPs:
+
+**EU region:** `34.22.170.75`, `35.242.228.133`, `34.159.197.30`
+
+**US region:** `35.245.69.134`, `34.94.111.83`
+
+**Asia region:** `35.200.122.55`
+
+## End-to-end example: sync new users to a CRM
+
+This example shows a complete registration `after` hook that creates a contact in a CRM.
+
+```jsonnet title="actions-payload/registration.jsonnet"
+function(ctx) {
+  email: ctx.identity.traits.email,
+  firstName: ctx.identity.traits.name.first,
+  lastName: ctx.identity.traits.name.last,
+  oryId: ctx.identity.id,
+}
+```
+
+Your webhook endpoint receives this payload, creates a CRM contact, and returns `200 OK`. Because `response.ignore: true`, Ory does not wait for or parse the response — the registration flow completes immediately.
+
+```yaml
+hook: web_hook
+config:
+  url: https://api.yourcrm.com/contacts
+  method: POST
+  body: base64://ENCODED_JSONNET
+  response:
+    ignore: true
+  auth:
+    type: api_key
+    config:
+      name: X-API-Key
+      value: YOUR_CRM_API_KEY
+      in: header
+```

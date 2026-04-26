@@ -1,0 +1,407 @@
+---
+title: 'Ory CLI complete command reference'
+description: 'Complete reference for all Ory CLI commands: top-level groups, subcommands, and key flags for managing Ory Network projects from the terminal.'
+keywords: ['ory cli reference', 'ory cli commands', 'ory cli flags', 'cli documentation']
+---
+
+This page provides a complete reference for every top-level command group in the Ory CLI. Each group lists its subcommands and the key flags available. For installation and authentication, see the [CLI installation guide](/cli/installation). For workflow examples, see [CLI basics](/cli/basics).
+
+Run `ory help` at any time to see the top-level command list, or append `--help` to any command for context-specific usage information.
+
+## Global flags
+
+These flags are available on every command:
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--config` | `-c` | Path to the Ory Network configuration file |
+| `--format` | | Output format: `default`, `json`, `json-pretty`, `yaml`, `jsonpath`, `jsonpointer` |
+| `--help` | `-h` | Show help for the command |
+| `--project` | | Project to use, either by ID or partial slug |
+| `--quiet` | `-q` | Suppress output |
+| `--workspace` | | Workspace to use, either by ID or partial name |
+| `--yes` | `-y` | Confirm all prompts without interactive input |
+
+---
+
+## ory auth
+
+Create a new Ory Network account or sign in to an existing account.
+
+```bash
+ory auth [flags]
+ory auth [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory auth logout` | Remove the stored session from this machine |
+
+**Key flags**
+
+| Flag | Description |
+|------|-------------|
+| `--format` | Output format |
+
+---
+
+## ory create
+
+Create Ory Network resources.
+
+```bash
+ory create [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory create event-stream` | Create a new event stream |
+| `ory create jwk` | Create a JSON Web Key Set |
+| `ory create oauth2-client` | Create an OAuth 2.0 client |
+| `ory create organization` | Create a new B2B SSO organization |
+| `ory create project` | Create a new Ory Network project |
+| `ory create relationships` | Create relationship tuples from arguments or JSON files |
+| `ory create workspace` | Create a new Ory Network workspace |
+
+**Key flags for `ory create oauth2-client`**
+
+| Flag | Description |
+|------|-------------|
+| `--name` | Client name |
+| `--grant-type` | Allowed grant types (repeatable) |
+| `--response-type` | Allowed response types (repeatable) |
+| `--redirect-uri` | Allowed redirect URIs (repeatable) |
+| `--scope` | Allowed scopes |
+| `--secret` | Client secret (auto-generated if omitted) |
+| `--token-endpoint-auth-method` | Authentication method at the token endpoint |
+| `--file` | Read client definition from a JSON file |
+
+---
+
+## ory delete
+
+Delete resources.
+
+```bash
+ory delete [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory delete access-tokens` | Delete all OAuth2 access tokens for a client |
+| `ory delete event-stream` | Delete an event stream by ID |
+| `ory delete identity` | Delete one or more identities by ID |
+| `ory delete jwk` | Delete a JSON Web Key Set |
+| `ory delete oauth2-client` | Delete one or more OAuth2 clients by ID |
+| `ory delete organization` | Delete an organization by ID |
+| `ory delete relationships` | Delete all relationships matching a relation query |
+
+---
+
+## ory format
+
+Helpers for formatting code.
+
+```bash
+ory format [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory format jsonnet` | Format a Jsonnet file |
+
+---
+
+## ory get
+
+Get a resource.
+
+```bash
+ory get [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory get identity` | Get one or more identities by ID |
+| `ory get identity-config` | Get the Ory Identities service configuration |
+| `ory get jwk` | Get a JSON Web Key Set by ID |
+| `ory get oauth2-client` | Get one or more OAuth2 clients by ID |
+| `ory get oauth2-config` | Get the Ory OAuth2 and OIDC service configuration |
+| `ory get permission-config` | Get the Ory Permissions service configuration |
+| `ory get project` | Get the complete configuration of an Ory Network project |
+| `ory get workspace` | Get an Ory Network workspace |
+
+---
+
+## ory import
+
+Import resources.
+
+```bash
+ory import [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory import identities` | Import identities from files or stdin |
+| `ory import jwk` | Import JSON Web Keys from JSON files |
+| `ory import oauth2-client` | Import OAuth2 clients from files or stdin |
+
+---
+
+## ory introspect
+
+Introspect resources.
+
+```bash
+ory introspect [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory introspect token` | Introspect an OAuth2 or OIDC token |
+
+---
+
+## ory is
+
+Assert the state of Ory Network resources.
+
+```bash
+ory is [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory is allowed` | Check whether a subject has a permission on an object |
+
+**Key flags for `ory is allowed`**
+
+| Flag | Description |
+|------|-------------|
+| `--namespace` | Permission namespace |
+| `--object` | Object identifier |
+| `--relation` | Relation to check |
+| `--subject-id` | Subject (user) identifier |
+
+The command exits `0` if the permission is granted and `1` if it is denied.
+
+---
+
+## ory lint
+
+Helpers for linting code.
+
+```bash
+ory lint [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory lint lint` | Lint a file |
+
+---
+
+## ory list
+
+List resources.
+
+```bash
+ory list [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory list event-streams` | List event streams |
+| `ory list identities` | List identities in a project |
+| `ory list oauth2-clients` | List OAuth2 clients |
+| `ory list organizations` | List B2B SSO organizations |
+| `ory list projects` | List Ory Network projects |
+| `ory list relationships` | List relationship tuples |
+| `ory list workspaces` | List Ory Network workspaces |
+
+**Key flags for `ory list identities`**
+
+| Flag | Description |
+|------|-------------|
+| `--page-size` | Maximum identities to return (default `100`) |
+| `--page-token` | Cursor token from a previous response |
+| `--consistency` | Read consistency: `eventual` (default) or `strong` |
+
+---
+
+## ory open
+
+Open Ory Account Experience pages in your browser.
+
+```bash
+ory open [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory open account-experience login` | Open the login page |
+| `ory open account-experience registration` | Open the registration page |
+| `ory open account-experience recovery` | Open the account recovery page |
+| `ory open account-experience settings` | Open the account settings page |
+| `ory open account-experience verification` | Open the email verification page |
+
+---
+
+## ory parse
+
+Parse Ory Network resources.
+
+```bash
+ory parse [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory parse relationships` | Parse relationship tuple definitions |
+
+---
+
+## ory patch
+
+Patch resources using JSON Patch operations.
+
+```bash
+ory patch [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory patch identity-config` | Patch the Ory Identities service configuration |
+| `ory patch oauth2-config` | Patch the Ory OAuth2 and OIDC service configuration |
+| `ory patch opl` | Update the Ory Permission Language policy |
+| `ory patch permission-config` | Patch the Ory Permissions service configuration |
+| `ory patch project` | Patch the project configuration |
+
+**Key flags for `ory patch project`**
+
+| Flag | Description |
+|------|-------------|
+| `--replace` | Replace a value at a JSON Pointer path: `/path/to/key="value"` |
+| `--add` | Add a value at a JSON Pointer path |
+| `--remove` | Remove a value at a JSON Pointer path |
+| `--file` | Apply patches from a JSON Patch file |
+
+---
+
+## ory perform
+
+Perform an OAuth2 flow.
+
+```bash
+ory perform [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory perform authorization-code` | Perform an OAuth2 authorization code flow |
+| `ory perform client-credentials` | Perform an OAuth2 client credentials flow |
+
+---
+
+## ory proxy
+
+Run your app and Ory on the same domain using a reverse proxy.
+
+```bash
+ory proxy [flags] <upstream-url>
+```
+
+<Note>
+`ory proxy` is primarily used for local development to route traffic correctly. For most use cases, prefer `ory tunnel`.
+</Note>
+
+---
+
+## ory revoke
+
+Revoke resources.
+
+```bash
+ory revoke [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory revoke token` | Revoke an OAuth2 access or refresh token |
+
+---
+
+## ory tunnel
+
+Mirror Ory APIs on your local machine for local development.
+
+```bash
+ory tunnel [flags] <upstream-url>
+```
+
+The tunnel routes requests through your local machine so that session cookies work correctly across your application and the Ory Network during local development.
+
+```bash
+ory tunnel --project $PROJECT_ID http://localhost:3000
+```
+
+---
+
+## ory update
+
+Update resources.
+
+```bash
+ory update [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory update event-stream` | Update an event stream |
+| `ory update identity-config` | Replace the Ory Identities service configuration |
+| `ory update oauth2-client` | Update an OAuth2 client |
+| `ory update oauth2-config` | Replace the Ory OAuth2 and OIDC service configuration |
+| `ory update opl` | Replace the Ory Permission Language policy |
+| `ory update organization` | Update a B2B SSO organization |
+| `ory update permission-config` | Replace the Ory Permissions service configuration |
+| `ory update project` | Replace the Ory Network project configuration |
+
+---
+
+## ory use
+
+Set the default workspace or project for subsequent commands.
+
+```bash
+ory use [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory use project` | Set the default project |
+| `ory use workspace` | Set the default workspace (not available for legacy projects) |
+
+---
+
+## ory validate
+
+Validate resources.
+
+```bash
+ory validate [command]
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `ory validate identity` | Validate an identity against a schema |
+
+---
+
+## ory version
+
+Display the CLI version, build time, and git hash.
+
+```bash
+ory version
+```

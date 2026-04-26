@@ -1,0 +1,142 @@
+---
+title: "Local development with Ory: tunnel setup and workflow"
+description: "Run Ory APIs on localhost for development using the Ory CLI tunnel. Covers port setup, SDK configuration, environments, API keys, and known limitations."
+keywords: ["ory local development", "ory tunnel", "ory cli tunnel", "localhost cookies", "ory sdk configuration"]
+---
+
+When you develop locally, your application runs on `localhost`. Because Ory uses cookies to manage browser sessions, Ory APIs must be served from the same domain as your application — otherwise the browser will block session cookies as third-party. The Ory CLI tunnel solves this by proxying your Ory project's APIs to `localhost` so your app and Ory share the same origin.
+
+## Prerequisites
+
+- An [Ory Network project](https://console.ory.sh/registration) (free)
+- [Ory CLI installed](/getting-started/quickstart#install-the-ory-cli)
+
+## Create a project
+
+If you do not have a project yet, create one with the CLI:
+
+```shell
+ory create project --name "My Development Project"
+```
+
+Note the **Project Slug** from the output, or find it on the **Connect** page in the [Ory Console](https://console.ory.sh/projects/current/connect).
+
+## Start the tunnel
+
+Run the following command, replacing `$PROJECT_SLUG` with your project slug and adjusting the port if your app runs elsewhere:
+
+```shell
+ory tunnel --dev --project $PROJECT_SLUG http://localhost:3000
+```
+
+This opens port `4000` on your local machine. The tunnel forwards requests to your Ory project and injects the necessary cookies on the `localhost` domain.
+
+| URL | Purpose |
+|-----|---------|
+| `http://localhost:3000` | Your application |
+| `http://localhost:4000` | Ory APIs (via tunnel) |
+| `http://localhost:4000/ui/registration` | Registration screen |
+| `http://localhost:4000/ui/login` | Login screen |
+
+The `--dev` flag disables a few production security checks (such as strict HTTPS enforcement) to make local development easier.
+
+<Warning>
+Always use `localhost`, never `127.0.0.1`. These are treated as separate origins by the browser. Cookies set on `localhost` are not sent to `127.0.0.1` and vice versa.
+</Warning>
+
+## Configure the SDK
+
+Point the Ory SDK at the tunnel URL instead of your project's cloud URL. Only the `FrontendApi` (which handles browser sessions) needs to go through the tunnel. Administrative APIs such as `IdentityApi` can be called directly against your project slug, though they also work via the tunnel.
+
+<CodeGroup>
+
+```typescript Node.js / TypeScript
+import { FrontendApi, Configuration } from "@ory/client-fetch"
+
+const frontend = new FrontendApi(
+  new Configuration({
+    // In development: http://localhost:4000
+    // In production: https://$PROJECT_SLUG.projects.oryapis.com
+    basePath: process.env.ORY_URL ?? "http://localhost:4000",
+    credentials: "include", // required for cookies
+  }),
+)
+
+const { data: session } = await frontend.toSession()
+const { data: loginFlow } = await frontend.createBrowserLoginFlow()
+```
+
+```go Go
+import (
+  ory "github.com/ory/client-go"
+)
+
+cfg := ory.NewConfiguration()
+cfg.Servers = ory.ServerConfigurations{
+  // Switch to your project URL in production
+  {URL: "http://localhost:4000"},
+}
+client := ory.NewAPIClient(cfg)
+```
+
+</CodeGroup>
+
+<Note>
+Admin API URLs returned by endpoints such as account recovery or invite links point to your project slug domain by default. Rewrite these URLs to the tunnel URL (`http://localhost:4000`) before using them in the browser during local development. Check that all links use the tunnel base URL and not the project slug URL.
+</Note>
+
+## Environments and projects
+
+Ory Network uses separate projects for different environments. Each project is isolated — it has its own identity store, configuration, rate limits, and optionally a custom domain.
+
+| Environment | Use case | Custom domain | Rate limits |
+|-------------|----------|---------------|-------------|
+| Development | Local development and testing | No | Lower |
+| Staging | Pre-production testing | Yes | Lower than production |
+| Production | Live traffic | Yes | Full |
+
+To create a staging or production project, open the [Ory Console](https://console.ory.sh/projects/create), click **Create new project**, and select the appropriate environment.
+
+<Warning>
+Staging and development projects are for test data only. Ory Network does not guarantee GDPR-compliant PII handling in these environments.
+</Warning>
+
+Use the [Ory CLI](/cli/basics) to copy configuration between projects when promoting from development to staging or production.
+
+## API keys
+
+API keys authorize privileged (admin) operations such as creating or deleting identities. You do not need an API key for browser-facing flows — those use session cookies instead.
+
+To create an API key:
+
+<Steps>
+
+<Step title="Open the developers page">
+Go to your project in the [Ory Console](https://console.ory.sh) and navigate to **Developers**.
+</Step>
+
+<Step title="Create the key">
+Click **Create new API key**, enter a name, and click **Create**.
+</Step>
+
+<Step title="Copy the value">
+Copy the generated key immediately — it is only shown once.
+</Step>
+
+</Steps>
+
+Use the API key in the `Authorization` header for admin API calls:
+
+```shell
+curl -s https://$PROJECT_SLUG.projects.oryapis.com/admin/identities \
+  -H "Authorization: Bearer $ORY_API_KEY"
+```
+
+## Limitations
+
+The Ory CLI tunnel has two known limitations:
+
+- **WebAuthn** does not support cross-domain use. Because the tunnel proxies requests between domains, WebAuthn (passkeys, security keys) will not work locally via the tunnel.
+- **`localhost` vs `127.0.0.1`** — these are treated as different origins by browsers. Keep all requests consistently on `localhost`.
+
+For issues related to cookies or CSRF protection during local development, ensure all requests use `localhost` consistently and that your tunnel is running.

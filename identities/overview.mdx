@@ -1,0 +1,61 @@
+---
+title: "Ory Identities: user management and auth overview"
+description: "Learn how Ory Identities (built on Ory Kratos) handles login, registration, MFA, passwordless, social sign-in, sessions, and identity schemas."
+---
+
+Ory Identities is an API-first identity and user management system built on [Ory Kratos](https://github.com/ory/kratos). It handles the authentication and user management concerns that nearly every application needs — registration, login, account recovery, email verification, profile updates, and multi-factor authentication — without shipping an HTML rendering engine. You bring your own UI, or use the Ory Account Experience, while Ory Identities enforces security best practices at every step.
+
+## Core concepts
+
+### Identity schemas
+
+Every user in Ory Identities is represented as an **identity**. The data model for an identity is defined by a JSON Schema called an **identity schema**. You can configure the schema to capture exactly the data your application needs — for example, a billing address for customers, multiple email addresses, or a cost-center assignment for internal staff. Ory ships preset schemas for the most common use cases.
+
+### Self-service flows
+
+Self-service flows are the operations users perform themselves, without administrative intervention. Ory implements these flows with security controls recommended by NIST, IETF, and industry researchers:
+
+| Flow | Purpose |
+| :--- | :------ |
+| Registration | Create a new user account |
+| Login | Authenticate and receive a session |
+| Logout | Terminate the current session |
+| Settings | Update profile, email, or credentials |
+| Account recovery | Regain access via "Forgot password" or backup codes |
+| Email/address verification | Confirm that an address belongs to the user |
+
+Each flow supports both **browser-based** apps (server-side and single-page applications) and **API-based** flows for native mobile and desktop clients.
+
+### Sessions
+
+When a user authenticates successfully, Ory creates a **session**. A session is proof of authentication and carries metadata such as the user's identity, the methods used to authenticate, and the Authenticator Assurance Level (AAL). Browser clients receive an Ory Session Cookie; native clients receive an Ory Session Token.
+
+<Note>
+Ory uses the terms "user", "user account", and "identity" interchangeably throughout the documentation.
+</Note>
+
+## Authentication methods
+
+Ory Identities supports a range of authentication methods that you can enable individually or in combination:
+
+- **Password-based login** — classic email/username and password
+- **Social sign-in (OIDC)** — sign in with Google, GitHub, Microsoft, and 15+ other providers
+- **Passwordless** — passkeys (WebAuthn), one-time codes via email or SMS
+- **Multi-factor authentication** — TOTP (Google Authenticator), WebAuthn hardware tokens, lookup secrets
+
+## Explore this section
+
+<CardGroup cols={2}>
+  <Card title="Sign-in and registration" icon="key" href="/identities/sign-in">
+    How login and registration flows work, password authentication, and session management.
+  </Card>
+  <Card title="Multi-factor authentication" icon="shield-halved" href="/identities/mfa">
+    Add a second factor with TOTP, WebAuthn/passkeys, or lookup secrets.
+  </Card>
+  <Card title="Social sign-in" icon="brands-google" href="/identities/social-signin">
+    Let users sign in with Google, GitHub, and other OAuth2/OIDC providers.
+  </Card>
+  <Card title="Passwordless authentication" icon="fingerprint" href="/identities/passwordless">
+    Use passkeys, magic links, or one-time codes to remove passwords entirely.
+  </Card>
+</CardGroup>

@@ -1,0 +1,189 @@
+---
+title: "Getting started with self-hosted Ory open source"
+description: "Learn how to install and run Ory Kratos, Hydra, Keto, Oathkeeper, and Polis on your own infrastructure using Docker, Kubernetes, or pre-built binaries."
+keywords: ["ory self-hosted", "docker", "kubernetes", "helm", "quickstart", "installation", "kratos", "hydra", "keto", "oathkeeper"]
+---
+
+Ory's open-source projects are designed to run anywhere — on your laptop, in a Docker container, or on a Kubernetes cluster at scale. Each service ships as a stateless binary with no external runtime dependencies beyond a database. You can run a single project in isolation or combine the full stack depending on your use case.
+
+## Choose the right project
+
+Before installing, identify which Ory projects you need:
+
+<CardGroup cols={2}>
+  <Card title="Ory Kratos" icon="user" href="/kratos/quickstart">
+    User authentication and identity management — login, registration, MFA, account recovery, and session handling.
+  </Card>
+  <Card title="Ory Hydra" icon="key" href="/hydra/overview">
+    OAuth 2.0 and OpenID Connect provider — issue tokens and become your own authorization server.
+  </Card>
+  <Card title="Ory Keto" icon="shield" href="/keto/overview">
+    Fine-grained permission system — relationship-based access control inspired by Google Zanzibar.
+  </Card>
+  <Card title="Ory Oathkeeper" icon="lock" href="/oathkeeper/overview">
+    Identity and Access Proxy — enforce auth rules in front of any upstream service without code changes.
+  </Card>
+  <Card title="Ory Polis" icon="building" href="https://github.com/ory/polis">
+    Enterprise SSO bridge — connect SAML identity providers to your OAuth2/OIDC application.
+  </Card>
+  <Card title="Ory Elements" icon="layout" href="https://github.com/ory/elements">
+    UI component library — pre-built React components for all Ory self-service flows.
+  </Card>
+</CardGroup>
+
+<Tip>
+  Not sure which projects you need? Each service works independently. Start with Ory Kratos if you need user authentication, or Ory Hydra if you need to issue OAuth2 tokens.
+</Tip>
+
+## Installation options
+
+### Docker (recommended for getting started)
+
+Every Ory project publishes official Docker images to Docker Hub. Running a project with in-memory storage requires no database setup and is the fastest way to evaluate Ory.
+
+<Steps>
+  <Step title="Pull the Docker image">
+    Replace `kratos` with the project you want (`hydra`, `keto`, `oathkeeper`, or `polis`):
+
+    ```bash
+    docker pull oryd/kratos:latest
+    ```
+  </Step>
+  <Step title="Run with in-memory storage">
+    Use `DSN=memory` to start quickly without a database. This is for development only — all data is lost when the container stops.
+
+    ```bash
+    docker run --rm -it \
+      -e DSN=memory \
+      oryd/kratos:latest serve
+    ```
+  </Step>
+  <Step title="Connect a database for persistence">
+    For persistent storage, set `DSN` to a PostgreSQL, MySQL, or CockroachDB connection string and run migrations before starting the server. See [deployment and database setup](/oss/deployment) for full details.
+
+    ```bash
+    docker run --rm \
+      -e DSN=postgres://user:password@host:5432/kratos \
+      oryd/kratos:latest migrate sql -e --yes
+
+    docker run --rm -p 4433:4433 -p 4434:4434 \
+      -e DSN=postgres://user:password@host:5432/kratos \
+      -v /path/to/kratos.yml:/etc/config/kratos/kratos.yml \
+      oryd/kratos:latest serve \
+      --config /etc/config/kratos/kratos.yml
+    ```
+  </Step>
+</Steps>
+
+### Kubernetes with Helm
+
+Ory maintains official Helm Charts for all projects. This is the recommended approach for production deployments.
+
+<Steps>
+  <Step title="Add the Ory Helm repository">
+    ```bash
+    helm repo add ory https://k8s.ory.com/helm/charts
+    helm repo update
+    ```
+  </Step>
+  <Step title="Create a namespace">
+    ```bash
+    kubectl create namespace ory
+    ```
+  </Step>
+  <Step title="Install a project">
+    Install Ory Kratos with a custom values file:
+
+    ```bash
+    helm install ory-kratos ory/kratos \
+      --namespace ory \
+      --create-namespace \
+      -f values.yaml
+    ```
+
+    A minimal `values.yaml` for Kratos:
+
+    ```yaml
+    kratos:
+      config:
+        dsn: postgres://user:password@host:5432/kratos
+      automigration:
+        enabled: true
+    ```
+  </Step>
+  <Step title="Verify the deployment">
+    ```bash
+    kubectl get pods -n ory
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  Full Helm chart documentation and all available values are at [k8s.ory.com/helm](https://k8s.ory.com/helm/).
+</Note>
+
+### Pre-built binaries
+
+Pre-built binaries are available for Linux, macOS, and Windows on every project's GitHub releases page. Binaries are a few megabytes and have no system-level dependencies (except libc/libmusl when using SQLite).
+
+<Steps>
+  <Step title="Download the binary">
+    Go to the releases page for your project and download the archive for your platform:
+
+    - [Ory Kratos releases](https://github.com/ory/kratos/releases)
+    - [Ory Hydra releases](https://github.com/ory/hydra/releases)
+    - [Ory Keto releases](https://github.com/ory/keto/releases)
+    - [Ory Oathkeeper releases](https://github.com/ory/oathkeeper/releases)
+    - [Ory Polis releases](https://github.com/ory/polis/releases)
+  </Step>
+  <Step title="Run database migrations">
+    ```bash
+    kratos migrate sql --yes -e --config /path/to/config.yaml
+    ```
+  </Step>
+  <Step title="Start the server">
+    ```bash
+    kratos serve --config /path/to/config.yaml
+    ```
+  </Step>
+</Steps>
+
+## Project quickstarts
+
+Each project has its own quickstart guide with step-by-step instructions and example configurations:
+
+<CardGroup cols={2}>
+  <Card title="Kratos quickstart" icon="user" href="/kratos/quickstart">
+    Run a full Ory Kratos setup with a sample UI using Docker Compose.
+  </Card>
+  <Card title="Hydra self-hosted" icon="key" href="/hydra/self-hosted">
+    Stand up an OAuth2 server and perform an authorization code flow.
+  </Card>
+  <Card title="Keto quickstart" icon="shield" href="/keto/self-hosted">
+    Define permission namespaces and evaluate access control checks.
+  </Card>
+  <Card title="Oathkeeper deploy" icon="lock" href="/oathkeeper/configure-deploy">
+    Configure access rules and proxy requests through Oathkeeper.
+  </Card>
+</CardGroup>
+
+## Configuration
+
+All Ory services share a consistent configuration system. You can configure each service using:
+
+- **YAML or JSON files** — pass one or more config files with `--config` / `-c`
+- **Environment variables** — any config key can be set as an environment variable by uppercasing and replacing dots and hyphens with underscores (for example, `dsn` becomes `DSN`)
+- **CLI flags** — available for select settings; run `<service> --help` for details
+
+```bash
+# Using a config file
+kratos serve --config /etc/kratos/config.yaml
+
+# Using environment variables
+DSN=postgres://... kratos serve
+
+# Multiple config files (merged in order, later files win)
+kratos serve --config base.yaml --config overrides.yaml
+```
+
+For complete configuration reference, see the [Kratos configuration guide](/kratos/configuration) or the individual project documentation for Hydra, Keto, and Oathkeeper.

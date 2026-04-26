@@ -1,0 +1,338 @@
+---
+title: 'Ory REST API endpoints and request examples'
+description: 'Reference for key Ory Network API endpoints covering identities, sessions, OAuth2 clients, and permissions with curl examples and response shapes.'
+keywords: ['ory api endpoints', 'identities api', 'sessions api', 'oauth2 api', 'permissions api', 'curl examples']
+---
+
+This page documents the most commonly used Ory Network REST API endpoints. All requests target your project's base URL at `https://{project-slug}.projects.oryapis.com`. Admin endpoints require a project API key passed as a Bearer token in the `Authorization` header. See the [API overview](/reference/api-overview) for authentication details.
+
+## Identities
+
+Identities represent users in your system. The admin API lets you create, read, update, delete, and list identities.
+
+### List identities
+
+```
+GET /admin/identities
+```
+
+Returns a paginated list of identities in your project. Results are delivered through the `Link` response header for cursor-based pagination.
+
+**Query parameters**
+
+<ParamField query="page_size" type="integer">
+  Maximum number of identities to return per page. Defaults to 250.
+</ParamField>
+
+<ParamField query="page_token" type="string">
+  Cursor token from a previous response's `Link` header to fetch the next page.
+</ParamField>
+
+<ParamField query="consistency" type="string">
+  Read consistency level. One of `strong` or `eventual`. Defaults to `eventual`. Eventual consistency is faster but may not reflect writes made in the last ~5 seconds.
+</ParamField>
+
+```bash
+curl https://{project-slug}.projects.oryapis.com/admin/identities \
+  -H "Authorization: Bearer $ORY_API_KEY"
+```
+
+### Get an identity
+
+```
+GET /admin/identities/{id}
+```
+
+Returns a single identity by its UUID.
+
+```bash
+curl https://{project-slug}.projects.oryapis.com/admin/identities/$IDENTITY_ID \
+  -H "Authorization: Bearer $ORY_API_KEY"
+```
+
+**Response**
+
+<ResponseField name="id" type="string" required>
+  The identity's UUID.
+</ResponseField>
+
+<ResponseField name="schema_id" type="string" required>
+  The ID of the identity schema used by this identity.
+</ResponseField>
+
+<ResponseField name="traits" type="object" required>
+  Key-value map of identity traits as defined by the schema (for example, `email`, `name`).
+</ResponseField>
+
+<ResponseField name="state" type="string" required>
+  Identity state: `active` or `inactive`.
+</ResponseField>
+
+<ResponseField name="created_at" type="string" required>
+  RFC 3339 timestamp of when the identity was created.
+</ResponseField>
+
+### Create an identity
+
+```
+POST /admin/identities
+```
+
+Creates a new identity with the given traits and schema.
+
+```bash
+curl -X POST https://{project-slug}.projects.oryapis.com/admin/identities \
+  -H "Authorization: Bearer $ORY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema_id": "preset://email",
+    "traits": {
+      "email": "user@example.com"
+    }
+  }'
+```
+
+### Delete an identity
+
+```
+DELETE /admin/identities/{id}
+```
+
+Permanently deletes an identity and all associated sessions and credentials.
+
+```bash
+curl -X DELETE https://{project-slug}.projects.oryapis.com/admin/identities/$IDENTITY_ID \
+  -H "Authorization: Bearer $ORY_API_KEY"
+```
+
+---
+
+## Sessions
+
+Sessions represent authenticated user state. Use the session admin API to list, inspect, and revoke sessions.
+
+### List sessions for an identity
+
+```
+GET /admin/identities/{id}/sessions
+```
+
+Returns all active sessions for a specific identity.
+
+```bash
+curl https://{project-slug}.projects.oryapis.com/admin/identities/$IDENTITY_ID/sessions \
+  -H "Authorization: Bearer $ORY_API_KEY"
+```
+
+### Revoke a session
+
+```
+DELETE /admin/sessions/{id}
+```
+
+Immediately invalidates a session, forcing the user to authenticate again.
+
+```bash
+curl -X DELETE https://{project-slug}.projects.oryapis.com/admin/sessions/$SESSION_ID \
+  -H "Authorization: Bearer $ORY_API_KEY"
+```
+
+### Check session validity (frontend)
+
+```
+GET /sessions/whoami
+```
+
+This is a **frontend API** that does not require an API key. It validates the session cookie or Bearer token sent by the user's browser and returns the associated identity.
+
+```bash
+curl https://{project-slug}.projects.oryapis.com/sessions/whoami \
+  -H "Cookie: ory_session_...=..."
+```
+
+---
+
+## OAuth2 clients
+
+OAuth2 clients represent applications registered to use Ory's OAuth2 and OpenID Connect flows.
+
+### List OAuth2 clients
+
+```
+GET /admin/clients
+```
+
+Returns a paginated list of OAuth2 clients registered in your project.
+
+<ParamField query="page_size" type="integer">
+  Number of clients per page.
+</ParamField>
+
+<ParamField query="page_token" type="string">
+  Cursor token for the next page from the `Link` header.
+</ParamField>
+
+```bash
+curl https://{project-slug}.projects.oryapis.com/admin/clients \
+  -H "Authorization: Bearer $ORY_API_KEY"
+```
+
+### Create an OAuth2 client
+
+```
+POST /admin/clients
+```
+
+Registers a new OAuth2 client.
+
+```bash
+curl -X POST https://{project-slug}.projects.oryapis.com/admin/clients \
+  -H "Authorization: Bearer $ORY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "My App",
+    "grant_types": ["authorization_code", "refresh_token"],
+    "response_types": ["code"],
+    "redirect_uris": ["https://myapp.example.com/callback"],
+    "scope": "openid email profile offline_access",
+    "token_endpoint_auth_method": "client_secret_basic"
+  }'
+```
+
+**Response**
+
+<ResponseField name="client_id" type="string" required>
+  The generated OAuth2 client ID.
+</ResponseField>
+
+<ResponseField name="client_secret" type="string">
+  The generated client secret. Returned only once at creation time.
+</ResponseField>
+
+<ResponseField name="grant_types" type="array" required>
+  List of allowed grant types.
+</ResponseField>
+
+<ResponseField name="redirect_uris" type="array" required>
+  List of allowed redirect URIs.
+</ResponseField>
+
+### Introspect a token
+
+```
+POST /admin/oauth2/introspect
+```
+
+Validates an OAuth2 access or refresh token and returns its metadata.
+
+```bash
+curl -X POST https://{project-slug}.projects.oryapis.com/admin/oauth2/introspect \
+  -H "Authorization: Bearer $ORY_API_KEY" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "token=$ACCESS_TOKEN"
+```
+
+---
+
+## Permissions
+
+The permissions API uses relationship tuples to model fine-grained access control with the Ory Permission Language (OPL).
+
+### Check a permission
+
+```
+GET /relation-tuples/check
+```
+
+Checks whether a subject has a given permission on an object. This is a **frontend API** and does not require an API key.
+
+<ParamField query="namespace" type="string" required>
+  The permission namespace defined in your OPL policy.
+</ParamField>
+
+<ParamField query="object" type="string" required>
+  The object identifier.
+</ParamField>
+
+<ParamField query="relation" type="string" required>
+  The relation to check (for example, `read`, `write`, `owner`).
+</ParamField>
+
+<ParamField query="subject_id" type="string">
+  The subject (user) ID to check permissions for. Use either `subject_id` or `subject_set_*`.
+</ParamField>
+
+```bash
+curl "https://{project-slug}.projects.oryapis.com/relation-tuples/check?namespace=files&object=file:readme&relation=read&subject_id=$USER_ID" \
+  -H "Authorization: Bearer $ORY_API_KEY"
+```
+
+### Create relationship tuples
+
+```
+PUT /admin/relation-tuples
+```
+
+Creates one or more relationship tuples that define access control rules.
+
+```bash
+curl -X PUT https://{project-slug}.projects.oryapis.com/admin/relation-tuples \
+  -H "Authorization: Bearer $ORY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "insert",
+    "relation_tuples": [
+      {
+        "namespace": "files",
+        "object": "file:readme",
+        "relation": "owner",
+        "subject_id": "user:alice"
+      }
+    ]
+  }'
+```
+
+### List relationship tuples
+
+```
+GET /admin/relation-tuples
+```
+
+Returns all relationship tuples matching a given query.
+
+```bash
+curl "https://{project-slug}.projects.oryapis.com/admin/relation-tuples?namespace=files&object=file:readme" \
+  -H "Authorization: Bearer $ORY_API_KEY"
+```
+
+---
+
+## Project configuration
+
+### Get project configuration
+
+```
+GET /projects/{project_id}
+```
+
+Returns the complete configuration for a project. This endpoint requires a **workspace API key**.
+
+```bash
+curl https://api.console.ory.sh/projects/$PROJECT_ID \
+  -H "Authorization: Bearer $ORY_WORKSPACE_API_KEY"
+```
+
+### Update project configuration
+
+```
+PUT /projects/{project_id}
+```
+
+Replaces the project configuration. The request body follows the project configuration schema, which mirrors the underlying Ory Kratos, Hydra, and Keto configuration formats.
+
+```bash
+curl -X PUT https://api.console.ory.sh/projects/$PROJECT_ID \
+  -H "Authorization: Bearer $ORY_WORKSPACE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d @config.json
+```

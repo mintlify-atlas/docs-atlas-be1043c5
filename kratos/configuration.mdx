@@ -1,0 +1,373 @@
+---
+title: "Ory Kratos configuration guide and key options"
+description: "Configure Ory Kratos with identity schemas, courier email settings, session lifespan, cookies, and self-service flow URLs using a YAML config file."
+keywords: ["ory kratos", "configuration", "identity schema", "json schema", "config.yml", "courier", "session", "cookies"]
+---
+
+Ory Kratos is configured through a single file — by default `kratos.yml` — which you pass to the server at startup using the `--config` flag. This document covers the configuration options that matter most when deploying Kratos: identity schemas, email delivery, sessions, and self-service flow URLs.
+
+<Note>
+For the complete list of every available configuration key, see the [Kratos configuration reference](https://www.ory.sh/docs/kratos/reference/configuration).
+</Note>
+
+## Configuration file
+
+Kratos accepts JSON, YAML, and TOML configuration files. Name your file `kratos.yml`, `kratos.yaml`, `kratos.json`, or `kratos.toml` to get automatic validation and code completion in editors that use [schemastore.org](https://www.schemastore.org/).
+
+Pass the file path when starting Kratos:
+
+```shell
+kratos serve --config /path/to/kratos.yml
+```
+
+### Environment variables
+
+Every configuration key can also be set as an environment variable. Nested keys map to environment variables by replacing each `.` separator with `_`:
+
+| Config key | Environment variable |
+|---|---|
+| `dsn` | `DSN` |
+| `selfservice.flows.settings.ui_url` | `SELFSERVICE_FLOWS_SETTINGS_UI_URL` |
+| `courier.smtp.connection_uri` | `COURIER_SMTP_CONNECTION_URI` |
+
+Environment variables take precedence over values in the config file, making it practical to store sensitive values (database passwords, SMTP credentials) outside of version control.
+
+## Database (DSN)
+
+The `dsn` key sets the database connection string. Kratos supports SQLite, PostgreSQL, MySQL, and CockroachDB:
+
+<Tabs>
+
+<Tab title="SQLite">
+
+```yaml title="kratos.yml"
+dsn: sqlite:///var/lib/sqlite/db.sqlite?_fk=true
+```
+
+</Tab>
+
+<Tab title="PostgreSQL">
+
+```yaml title="kratos.yml"
+dsn: postgres://kratos:secret@localhost:5432/kratos?sslmode=disable
+```
+
+</Tab>
+
+<Tab title="MySQL">
+
+```yaml title="kratos.yml"
+dsn: mysql://kratos:secret@tcp(localhost:3306)/kratos?parseTime=true
+```
+
+</Tab>
+
+<Tab title="CockroachDB">
+
+```yaml title="kratos.yml"
+dsn: cockroach://root@localhost:26257/defaultdb?sslmode=disable
+```
+
+</Tab>
+
+</Tabs>
+
+<Warning>
+SQLite is suitable for development and the quickstart. Use PostgreSQL, MySQL, or CockroachDB in production.
+</Warning>
+
+## Identity schemas
+
+An identity schema defines the shape of user data in your system — which fields exist, which field is used as the login identifier, and which fields trigger email or SMS verification and recovery. Kratos uses [JSON Schema draft-07](https://json-schema.org) for identity schemas.
+
+### Minimum viable schema
+
+Every schema must contain a `traits` object. The following is the smallest valid schema:
+
+```json title="identity.schema.json"
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "traits": {
+      "type": "object"
+    }
+  }
+}
+```
+
+### Email and password schema
+
+The most common starting point uses an email address as the login identifier, with email verification and account recovery enabled:
+
+```json title="identity.schema.json"
+{
+  "$id": "https://example.com/identity.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Person",
+  "type": "object",
+  "properties": {
+    "traits": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "title": "E-Mail",
+          "maxLength": 320,
+          "ory.sh/kratos": {
+            "credentials": {
+              "password": { "identifier": true },
+              "code": { "identifier": true, "via": "email" }
+            },
+            "recovery": { "via": "email" },
+            "verification": { "via": "email" }
+          }
+        },
+        "name": {
+          "type": "object",
+          "properties": {
+            "first": { "type": "string", "title": "First name", "maxLength": 256 },
+            "last":  { "type": "string", "title": "Last name",  "maxLength": 256 }
+          }
+        }
+      },
+      "required": ["email"],
+      "additionalProperties": false
+    }
+  }
+}
+```
+
+### Schema extensions (`ory.sh/kratos`)
+
+The `ory.sh/kratos` key inside a trait property tells Kratos how that field is used at the system level. The table below lists the available extensions:
+
+| Extension | Purpose |
+|---|---|
+| `credentials.password.identifier: true` | Use this field as the login identifier for username/password login |
+| `credentials.code.identifier: true` + `via: "email"` | Use this field for passwordless one-time-code login via email |
+| `credentials.code.identifier: true` + `via: "sms"` | Use this field for passwordless one-time-code login via SMS |
+| `credentials.totp.account_name: true` | Display this field as the account name in TOTP authenticator apps |
+| `credentials.passkey.display_name: true` | Use this field as the passkey display name |
+| `recovery.via: "email"` | Enable account recovery via email for this field |
+| `recovery.via: "sms"` | Enable account recovery via SMS for this field |
+| `verification.via: "email"` | Enable address verification via email for this field |
+| `verification.via: "sms"` | Enable address verification via SMS for this field |
+
+### Preset schemas
+
+For convenience, Ory provides five ready-to-use preset schemas. Reference a preset by URL in your configuration:
+
+| Preset URL | Description |
+|---|---|
+| `preset://email` | Single `email` trait; email is login identifier, recovery, and verification address |
+| `preset://username` | Single `username` trait; no email recovery |
+| `preset://sms` | Single `phone_number` trait; SMS verification |
+| `preset://basic` | `email`, `name.first`, `name.last`, and `newsletter` checkbox |
+| `preset://blank` | Empty schema; no traits, identifiers, or recovery configured |
+
+### Registering your schema
+
+Reference the schema file in `kratos.yml`. You can register multiple schemas and assign each a unique ID:
+
+```yaml title="kratos.yml"
+identity:
+  default_schema_id: default
+  schemas:
+    - id: default
+      url: file:///etc/config/kratos/identity.schema.json
+    - id: customer
+      url: https://example.com/schemas/customer.schema.json
+```
+
+<Tip>
+Use `additionalProperties: false` in your schema to reject unexpected fields and keep identity data clean.
+</Tip>
+
+## Self-service flow URLs
+
+Each self-service flow needs a `ui_url` — the address of the page in your application that renders the form for that flow. Kratos redirects the browser to this URL after creating the flow object:
+
+```yaml title="kratos.yml"
+selfservice:
+  default_browser_return_url: https://app.example.com/
+
+  flows:
+    login:
+      ui_url: https://app.example.com/login
+    registration:
+      ui_url: https://app.example.com/register
+    settings:
+      ui_url: https://app.example.com/settings
+    recovery:
+      enabled: true
+      ui_url: https://app.example.com/recovery
+    verification:
+      enabled: true
+      ui_url: https://app.example.com/verify
+    error:
+      ui_url: https://app.example.com/error
+    logout:
+      after:
+        default_browser_return_url: https://app.example.com/login
+```
+
+<Warning>
+If you do not configure `ui_url` for a flow, Kratos redirects to its built-in fallback URLs, which are only suitable for debugging.
+</Warning>
+
+## Courier (email and SMS)
+
+The courier handles outgoing emails (verification, recovery) and SMS messages. Configure the SMTP connection in `kratos.yml`:
+
+```yaml title="kratos.yml"
+courier:
+  smtp:
+    connection_uri: smtps://user:password@smtp.example.com:465/
+    from_address: no-reply@example.com
+    from_name: My App
+```
+
+For local development, use [MailSlurper](https://mailslurper.com) or a similar mock SMTP server:
+
+```yaml title="kratos.yml"
+courier:
+  smtp:
+    connection_uri: smtps://test:test@mailslurper:1025/?skip_ssl_verify=true
+```
+
+<Note>
+SMS delivery requires a configured SMS provider. See the [Ory Kratos courier documentation](https://www.ory.sh/docs/kratos/reference/configuration) for SMS-specific options.
+</Note>
+
+## Sessions
+
+The session configuration controls how long a session is valid and how the session cookie behaves:
+
+```yaml title="kratos.yml"
+session:
+  lifespan: 720h   # 30 days; accepts combinations like 24h30m
+  cookie:
+    name: ory_kratos_session
+    domain: example.com
+    path: /
+    same_site: Lax
+    persistent: true   # if false, the cookie is deleted when the browser closes
+```
+
+Session lifespan uses Go duration syntax. Examples:
+
+| Value | Duration |
+|---|---|
+| `72h` | 3 days |
+| `720h` | 30 days |
+| `1h13m3s` | 1 hour, 13 minutes, 3 seconds |
+
+<Tip>
+Browser-based apps (including SPAs) should use the session cookie. Native mobile apps and CLI tools should use session tokens, which Kratos issues automatically when it detects a non-browser client.
+</Tip>
+
+## Serve URLs
+
+Configure the base URLs for Kratos' public and admin APIs. The public API is used by your UI and end users; the admin API should never be exposed to the internet:
+
+```yaml title="kratos.yml"
+serve:
+  public:
+    base_url: https://kratos.example.com/
+    cors:
+      enabled: true
+      allowed_origins:
+        - https://app.example.com
+  admin:
+    base_url: http://kratos-admin.internal:4434/
+```
+
+## Putting it all together
+
+The following example shows a minimal but complete production-oriented configuration:
+
+```yaml title="kratos.yml"
+version: v0.13.0
+
+dsn: postgres://kratos:secret@localhost:5432/kratos?sslmode=require
+
+serve:
+  public:
+    base_url: https://kratos.example.com/
+    cors:
+      enabled: true
+      allowed_origins:
+        - https://app.example.com
+  admin:
+    base_url: http://localhost:4434/
+
+selfservice:
+  default_browser_return_url: https://app.example.com/
+  allowed_return_urls:
+    - https://app.example.com
+
+  methods:
+    password:
+      enabled: true
+    code:
+      enabled: true
+
+  flows:
+    login:
+      ui_url: https://app.example.com/login
+    registration:
+      ui_url: https://app.example.com/register
+      after:
+        password:
+          hooks:
+            - hook: session
+    settings:
+      ui_url: https://app.example.com/settings
+    recovery:
+      enabled: true
+      ui_url: https://app.example.com/recovery
+    verification:
+      enabled: true
+      ui_url: https://app.example.com/verify
+    error:
+      ui_url: https://app.example.com/error
+    logout:
+      after:
+        default_browser_return_url: https://app.example.com/login
+
+session:
+  lifespan: 720h
+  cookie:
+    domain: example.com
+    same_site: Lax
+    persistent: true
+
+courier:
+  smtp:
+    connection_uri: smtps://user:password@smtp.example.com:465/
+    from_address: no-reply@example.com
+    from_name: My App
+
+identity:
+  default_schema_id: default
+  schemas:
+    - id: default
+      url: file:///etc/config/kratos/identity.schema.json
+
+log:
+  level: info
+  format: json
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/kratos/quickstart">
+    Run the Docker-based quickstart to see configuration in action.
+  </Card>
+  <Card title="Self-service flows" icon="arrows-rotate" href="/kratos/self-service">
+    Learn how login, registration, recovery, and verification flows work.
+  </Card>
+</CardGroup>

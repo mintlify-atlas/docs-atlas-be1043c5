@@ -1,0 +1,149 @@
+---
+title: "Configure custom domains for your Ory project"
+description: "Point your own domain to Ory Network with a CNAME or A record, configure cookies and CORS, and verify TLS certificates in a few steps."
+keywords: ["custom domains", "CNAME", "DNS", "Ory Network", "custom hostname", "CAA records", "CORS"]
+---
+
+Custom domains let you serve Ory Network's identity APIs from a hostname you control — for example `auth.example.com` — instead of the default `<project-slug>.projects.oryapis.com`. Once active, the custom domain becomes your project's SDK Configuration URL and the base for all session cookies and email links.
+
+<Note>Custom domains are available on paid plans only.</Note>
+
+## Add a custom domain to your project
+
+<Steps>
+  <Step title="Open the custom domains page">
+    In the [Ory Console](https://console.ory.sh), navigate to **Your project → Custom Domains** and click **Add Custom Domain**.
+  </Step>
+  <Step title="Enter your domain and cookie settings">
+    Fill in the domain you want to use (for example, `auth.example.com`). Set the **Cookie Domain** to the root domain you want cookies scoped to — typically the root of the CNAME you are adding. Ory session cookies are issued to this domain and all its subdomains.
+
+    <Warning>
+      Browsers reject cookies set on domains listed on the [public suffix list](https://publicsuffix.org/). Those domains are not allowed as cookie domains.
+    </Warning>
+  </Step>
+  <Step title="Configure CORS origins">
+    Add the allowed origins for your applications under **CORS Origins**. Ory Network supports up to 50 origins per custom domain.
+
+    <Note>
+      Wildcard origins (`*`), `null`, and `localhost`/`127.0.0.1` are not permitted as CORS origins. Use an exact origin or a wildcard subdomain such as `https://*.example.com`. For local development, use [Ory Tunnel](/getting-started/local-development).
+    </Note>
+  </Step>
+  <Step title="Create a CNAME record with your DNS provider">
+    Copy the target value shown in the console (it looks like `<project-slug>.projects.oryapis.com`) and create a CNAME record at your DNS provider:
+
+    | Field       | Value                                      |
+    |-------------|--------------------------------------------|
+    | Type        | `CNAME`                                    |
+    | Host/Name   | `auth` (or whatever subdomain you chose)   |
+    | Value/Target| `<project-slug>.projects.oryapis.com`      |
+
+    <Warning>
+      If your DNS provider automatically enables proxying on CNAME records (for example, Cloudflare's orange-cloud proxy), disable it. Ory Network handles its own Cloudflare configuration and a proxied record will keep the domain stuck in **Pending** state.
+    </Warning>
+
+    Popular provider guides:
+    - [GoDaddy](https://www.godaddy.com/help/add-a-cname-record-19236)
+    - [Namecheap](https://www.namecheap.com/support/knowledgebase/article.aspx/9646/2237/how-to-create-a-cname-record-for-your-domain/)
+    - [Cloudflare](https://support.cloudflare.com/hc/en-us/articles/360019093151)
+  </Step>
+  <Step title="Wait for propagation and verify">
+    DNS changes can take up to 24 hours to propagate. Ory Network rechecks your domain automatically. You can also trigger a manual recheck from the Custom Domains page.
+
+    To verify the CNAME resolves correctly, run:
+
+    ```shell
+    dig auth.example.com
+    ```
+
+    The `ANSWER SECTION` must contain a `CNAME` entry pointing to `<project-slug>.projects.oryapis.com`. If it shows an IP address directly, proxying is still active on the CNAME.
+
+    When the domain is reachable, its status changes to **Active** and the Ory Account Experience is available at `https://auth.example.com/login`.
+  </Step>
+</Steps>
+
+## CAA records
+
+Ory Network uses Google's certificate authority (`pki.goog`) to issue TLS certificates for custom hostnames. If your domain has CAA records, you must authorize `pki.goog` or certificate issuance will fail.
+
+Check whether your domain has CAA records:
+
+```shell
+dig +noall +answer example.com caa
+```
+
+If the output is empty, no action is needed. If it lists one or more certificate authorities, add `pki.goog`:
+
+```
+# For the root domain
+example.com.       IN CAA 0 issue "pki.goog"
+
+# For a specific subdomain
+auth.example.com.  IN CAA 0 issue "pki.goog"
+```
+
+CAA records are inherited by subdomains, so adding the record at the root domain is usually sufficient.
+
+Provider guides for adding CAA records:
+- [GoDaddy](https://www.godaddy.com/help/change-a-caa-record-27289)
+- [Namecheap](https://www.namecheap.com/support/knowledgebase/article.aspx/9991/38/caa-record-and-why-it-is-needed-ssl-related/)
+- [Cloudflare](https://developers.cloudflare.com/ssl/edge-certificates/caa-records/)
+
+## Vercel deployments
+
+Vercel manages DNS for the domains it serves, so you cannot point the same subdomain to both Vercel and Ory using a CNAME. Use an A record instead.
+
+<Steps>
+  <Step title="Find Vercel's IP address">
+    In your Vercel project, go to **Settings → Domains**. Note the IP shown there. The common Vercel Anycast IP is `76.76.21.21`, but always confirm against your dashboard.
+  </Step>
+  <Step title="Add an A record">
+    Create an A record pointing your subdomain to Vercel's IP:
+
+    ```
+    auth.example.com.  A  76.76.21.21
+    ```
+  </Step>
+  <Step title="Add CAA records for both CAs">
+    Vercel uses Let's Encrypt; Ory uses `pki.goog`. Include both:
+
+    ```
+    example.com.  CAA  0 issue "letsencrypt.org"
+    example.com.  CAA  0 issue "pki.goog"
+    ```
+
+    Verify propagation before proceeding:
+
+    ```shell
+    dig CAA example.com +short
+    ```
+  </Step>
+  <Step title="Add the domain in each Vercel project">
+    Go to **Settings → Domains** in each Vercel project (dev, staging, production) and add your domain manually.
+  </Step>
+  <Step title="Add the custom domain in Ory Console">
+    After DNS has propagated, add your domain in the Ory Console as described in the steps above.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Cloudflare Error 1014
+
+If you see **Error 1014 — CNAME Cross-User Banned**, check two things:
+
+1. **Proxying** is disabled on your CNAME record in Cloudflare. See [Cloudflare proxied DNS records](https://developers.cloudflare.com/dns/manage-dns-records/reference/proxied-dns-records/).
+2. **Zone Hold** is temporarily released in your Cloudflare account. See [Zone Holds](https://developers.cloudflare.com/fundamentals/setup/account/account-security/zone-holds/#release-zone-holds).
+
+### Domain stuck in Pending state
+
+Run `dig` to confirm the CNAME value resolves to `<project-slug>.projects.oryapis.com` and not a direct IP address. A direct IP means a proxy layer is intercepting the record.
+
+## Automated emails and custom SMTP
+
+When using a custom domain without a custom SMTP server, links inside Ory Identities emails (account recovery, address verification) point to your custom domain but are sent from the default Ory Network email sender domain. Some providers (for example, Gmail) may treat this mismatch as a phishing signal and block the email.
+
+To prevent this, configure a custom SMTP server whose sending domain matches the root of your custom domain.
+
+<Tip>
+  Configure a custom SMTP server in your Ory project under **Email Configuration** in the Ory Console to ensure email links match your custom domain.
+</Tip>

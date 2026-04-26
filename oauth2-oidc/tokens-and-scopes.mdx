@@ -1,0 +1,334 @@
+---
+title: "OAuth2 tokens, scopes, and token validation guide"
+description: "Understand Ory's JWT access tokens, ID tokens, and refresh tokens, how scopes control access, and how to validate and introspect tokens in your APIs."
+---
+
+Ory issues three types of tokens in OAuth2 and OpenID Connect flows: access tokens, ID tokens, and refresh tokens. Each serves a distinct purpose. Scopes define the level of access an access token grants. This page explains how each token type works, how to configure and validate them, and how to use the userinfo and introspection endpoints.
+
+## Access tokens
+
+An access token is the credential a client presents to a resource server (your API) to prove it has been authorized to access protected resources. The resource server validates the token and grants or denies access based on the token's scope.
+
+### Opaque access tokens
+
+By default, Ory issues **opaque access tokens** — random strings with a cryptographic suffix that carry no readable payload:
+
+```text
+ory_at_JGhESDjKfHMQ8Wcy0cC3.hIQxGmX37ydn8WmKAnlD3U
+```
+
+Opaque tokens are stored in Ory's database. To validate one, your resource server calls Ory's [introspection endpoint](#token-introspection). This ensures the token is still active (not revoked) at the cost of one network roundtrip per request (~50 ms).
+
+### JWT access tokens
+
+Ory can issue **JWT access tokens** instead. JWTs are self-contained: the resource server verifies the signature locally using Ory's public keys, with no network call required (~1 ms validation).
+
+| | Opaque | JWT |
+|---|---|---|
+| Revocation | Immediate | Eventually (must wait for expiry or use introspection) |
+| Validation latency | ~50 ms (network call) | ~1 ms (local) |
+| Contains claims | No | Yes |
+
+<Warning>
+JWTs cannot be immediately revoked. If you revoke a JWT access token, it remains valid until it expires unless callers use the introspection endpoint to check revocation status. For high-security use cases, prefer opaque tokens or keep JWT lifetimes short.
+</Warning>
+
+**Enable JWT access tokens globally:**
+
+```bash
+ory patch oauth2-config --project <project-id> --workspace <workspace-id> \
+  --replace "/strategies/access_token=\"jwt\""
+```
+
+**Enable JWT access tokens for a specific client:**
+
+Use the Ory Console under the client's settings, or patch the client via the API with `access_token_strategy: "jwt"`.
+
+**Validate a JWT access token:**
+
+```javascript
+import { createRemoteJWKSet, jwtVerify } from "jose"
+
+const JWKS = createRemoteJWKSet(
+  new URL("https://$PROJECT_SLUG.projects.oryapis.com/.well-known/jwks.json")
+)
+
+const { payload } = await jwtVerify(accessToken, JWKS, {
+  issuer: "https://$PROJECT_SLUG.projects.oryapis.com",
+})
+
+console.log("Subject:", payload.sub)
+console.log("Scopes:", payload.scope)
+```
+
+The public keys are available at:
+
+```text
+https://$PROJECT_SLUG.projects.oryapis.com/.well-known/jwks.json
+```
+
+### Custom claims in access tokens
+
+When accepting a consent request via your custom consent UI, you can include custom claims in the access token:
+
+```javascript
+// When accepting consent, set session.access_token
+await ory.acceptOAuth2ConsentRequest({
+  consentChallenge: challenge,
+  acceptOAuth2ConsentRequest: {
+    grant_scope: grantedScopes,
+    session: {
+      access_token: {
+        some_custom_claim: "some_value",
+      },
+    },
+  },
+})
+```
+
+Custom claims appear nested under `ext` in the token payload:
+
+```json
+{
+  "sub": "...",
+  "ext": {
+    "some_custom_claim": "some_value"
+  }
+}
+```
+
+To promote a custom claim to the top level, add it to `allowed_top_level_claims`:
+
+```bash
+ory patch oauth2-config --project <project-id> --workspace <workspace-id> \
+  --replace "/oauth2/allowed_top_level_claims=[\"some_custom_claim\"]"
+```
+
+## ID tokens
+
+An ID token is a JWT that OpenID Connect issues alongside the access token when the `openid` scope is granted. It contains claims about the authenticated user and the authentication event itself.
+
+ID tokens are for **authentication** — they tell your application who the user is. They are not access credentials and must not be sent to APIs as bearer tokens.
+
+A typical ID token payload looks like:
+
+```json
+{
+  "iss": "https://$PROJECT_SLUG.projects.oryapis.com",
+  "sub": "04d75756-xxxx-4xxx-9xxx-xxxxxxxxxxxx",
+  "aud": "your-client-id",
+  "exp": 1311281970,
+  "iat": 1311280970,
+  "nonce": "KxSty13b2L",
+  "name": "Jane Doe",
+  "given_name": "Jane",
+  "family_name": "Doe",
+  "email": "jane@example.org",
+  "email_verified": true
+}
+```
+
+**Validate an ID token:**
+
+```javascript
+import { createRemoteJWKSet, jwtVerify } from "jose"
+
+const JWKS = createRemoteJWKSet(
+  new URL("https://$PROJECT_SLUG.projects.oryapis.com/.well-known/jwks.json")
+)
+
+const { payload } = await jwtVerify(idToken, JWKS, {
+  issuer: "https://$PROJECT_SLUG.projects.oryapis.com",
+  audience: "YOUR_CLIENT_ID",
+})
+```
+
+Ory signs ID tokens with the `hydra.openid.id-token` key set, available through the JWKS endpoint above.
+
+## Refresh tokens
+
+A refresh token allows your application to obtain a new access token after the current one expires, without requiring the user to authenticate again. Refresh tokens are always issued as opaque tokens in Ory because they must be immediately revocable.
+
+**Requirements to receive a refresh token:**
+
+- Include `offline_access` in the `scope` parameter of the authorization request.
+- The OAuth2 client must have `offline_access` in its allowed scopes.
+- The client must have the `refresh_token` grant type enabled.
+- The user must approve `offline_access` on the consent screen.
+
+**Use a refresh token:**
+
+```bash
+curl -X POST https://$PROJECT_SLUG.projects.oryapis.com/oauth2/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=refresh_token" \
+  -d "refresh_token=REFRESH_TOKEN" \
+  -d "client_id=YOUR_CLIENT_ID" \
+  -d "client_secret=YOUR_CLIENT_SECRET"
+```
+
+Ory responds with a new `access_token`, a new `refresh_token`, and, if the original exchange included an ID token, a new `id_token`.
+
+<Warning>
+Refresh tokens are single-use. Ory invalidates the old refresh token as soon as you use it and issues a new one. Store the replacement immediately, or you will lose the ability to refresh without the user re-authenticating.
+</Warning>
+
+**Secure storage for refresh tokens:**
+
+- Web apps: `httpOnly` and `secure` cookies (recommended)
+- Mobile apps: OS keychain (recommended)
+- SPAs: `sessionStorage` (acceptable, not persistent across tabs)
+
+By default, refresh tokens expire after 30 days. You can adjust the lifetime (maximum 6 months):
+
+```bash
+ory patch oauth2-config --project <project-id> --workspace <workspace-id> \
+  --replace "/ttl/refresh_token=\"720h\""
+```
+
+## Scopes
+
+Scopes define what an access token is permitted to do. The client requests scopes; the user approves or denies them at the consent screen; the resulting access token carries only the granted scopes.
+
+### Built-in Ory scopes
+
+| Scope | Description |
+|---|---|
+| `openid` | Triggers the OpenID Connect flow and includes an ID token in the response. |
+| `offline_access` | Requests a refresh token so the client can access resources when the user is offline. |
+
+### Standard OIDC scopes
+
+When using Ory with Ory Identities (the default setup), these OIDC standard scopes are supported:
+
+| Scope | Claims returned |
+|---|---|
+| `email` | `email`, `email_verified` — populated from the user's verified addresses. |
+| `profile` | `name`, `given_name`, `family_name`, `username`, `website`, `updated_at` — mapped from Ory Identity traits. |
+
+### Scopes vs. permissions
+
+Scopes and permissions are different concepts:
+
+- **Scopes** define what the client is authorized to access *in the name of the user*. They represent user consent.
+- **Permissions** (RBAC, ACL) define what the user themselves is allowed to do in your system.
+
+A client with `scope=read` can only read resources the user themselves has permission to read. Scopes do not grant broader access than the user has.
+
+### Customize the scope claim format
+
+By default, the `scope` claim in a JWT access token is an array:
+
+```json
+{ "scope": ["read", "write"] }
+```
+
+You can change this with the `/strategies/jwt/scope_claim` configuration:
+
+<Tabs>
+  <Tab title="Array (default)">
+    ```json
+    { "scope": ["read", "write"] }
+    ```
+
+    ```bash
+    ory patch oauth2-config {project.id} \
+      --replace '/strategies/jwt/scope_claim="list"'
+    ```
+  </Tab>
+  <Tab title="Space-delimited string">
+    ```json
+    { "scp": "read write" }
+    ```
+
+    ```bash
+    ory patch oauth2-config {project.id} \
+      --replace '/strategies/jwt/scope_claim="string"'
+    ```
+  </Tab>
+  <Tab title="Both">
+    ```json
+    { "scope": ["read", "write"], "scp": "read write" }
+    ```
+
+    ```bash
+    ory patch oauth2-config {project.id} \
+      --replace '/strategies/jwt/scope_claim="both"'
+    ```
+  </Tab>
+</Tabs>
+
+## Token introspection
+
+Token introspection lets a resource server validate an access token by querying Ory, regardless of whether the token is opaque or a JWT. Introspection also reflects revocation status, making it the reliable method for checking active tokens.
+
+**Introspect a token using curl:**
+
+```bash
+curl -X POST https://$PROJECT_SLUG.projects.oryapis.com/admin/oauth2/introspect \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "token=ACCESS_TOKEN"
+```
+
+**Response for an active token:**
+
+```json
+{
+  "active": true,
+  "sub": "04d75756-xxxx-4xxx-9xxx-xxxxxxxxxxxx",
+  "scope": "read write",
+  "client_id": "your-client-id",
+  "exp": 1311281970,
+  "iat": 1311280970
+}
+```
+
+**Response for an inactive or revoked token:**
+
+```json
+{
+  "active": false
+}
+```
+
+<Note>
+The introspection endpoint is an admin endpoint. Call it from your resource server, not from browser-side code. Never expose the introspection endpoint publicly.
+</Note>
+
+## Userinfo endpoint
+
+The userinfo endpoint returns claims about the authenticated user associated with an access token. The token must include the `openid` scope.
+
+```bash
+curl https://$PROJECT_SLUG.projects.oryapis.com/userinfo \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+**Example response:**
+
+```json
+{
+  "sub": "04d75756-xxxx-4xxx-9xxx-xxxxxxxxxxxx",
+  "email": "jane@example.org",
+  "email_verified": true,
+  "name": "Jane Doe"
+}
+```
+
+The userinfo endpoint returns any claims set in `session.id_token` when you accepted the consent request. The endpoint is publicly accessible, so never include sensitive data without explicit user consent.
+
+You can configure the client to return a signed JWT from the userinfo endpoint by setting `userinfo_signed_response_alg` to `RS256`. The response will have `Content-Type: application/jwt`.
+
+## Service discovery
+
+Ory publishes its endpoint URLs and supported capabilities at well-known discovery endpoints. Use these to configure your OAuth2 client automatically:
+
+```bash
+# OpenID Connect discovery (includes userinfo, id_token signing keys, etc.)
+curl https://$PROJECT_SLUG.projects.oryapis.com/.well-known/openid-configuration
+
+# OAuth 2.0 discovery (authorization server metadata)
+curl https://$PROJECT_SLUG.projects.oryapis.com/.well-known/oauth-authorization-server
+```
+
+Both responses include `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `userinfo_endpoint`, `introspection_endpoint`, and supported grant types, scopes, and signing algorithms.

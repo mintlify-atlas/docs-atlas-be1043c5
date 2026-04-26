@@ -1,0 +1,195 @@
+---
+title: "Manage Ory Network configuration with GitOps"
+description: "Version-control your Ory project configuration, automate deployments via CI/CD pipelines, and roll back changes safely using the Ory CLI."
+keywords: ["GitOps", "Ory CLI", "CI/CD", "GitHub Actions", "configuration management", "identity config", "OAuth2 config"]
+---
+
+GitOps treats your infrastructure and service configuration as code — stored in a version control system, reviewed through pull requests, and deployed automatically on merge. Ory Network's CLI makes it straightforward to export any project configuration as JSON, commit it to git, and push updates back to the project through a CI/CD pipeline.
+
+This guide uses GitHub Actions, but the same pattern works with GitLab CI, CircleCI, or any other pipeline that can run Docker containers.
+
+## Prerequisites
+
+- [Ory CLI](https://www.ory.sh/docs/guides/cli/installation) installed locally
+- A workspace API key stored as a repository secret (`ORY_WORKSPACE_API_KEY`)
+- Your `<workspace-id>` and `<project-id>` — find them with `ory list workspaces` and `ory list projects --workspace <workspace-id>`
+
+## Export your current configuration
+
+Pull the configuration you want to version-control and save it to a file:
+
+<CodeGroup>
+
+```bash Ory Identities
+ory get identity-config \
+  --workspace "<workspace-id>" \
+  --project "<project-id>" \
+  --format json-pretty \
+  > identity-config.json
+```
+
+```bash Ory OAuth2 & OpenID Connect
+ory get oauth2-config \
+  --workspace "<workspace-id>" \
+  --project "<project-id>" \
+  --format json-pretty \
+  > oauth2-config.json
+```
+
+```bash Ory Permissions
+ory get permission-config \
+  --workspace "<workspace-id>" \
+  --project "<project-id>" \
+  --format json-pretty \
+  > permission-config.json
+```
+
+</CodeGroup>
+
+Commit these files to your repository:
+
+```bash
+git add identity-config.json oauth2-config.json permission-config.json
+git commit -m "chore: add initial Ory project configuration"
+git push
+```
+
+## Set up a GitHub Actions workflow
+
+Create `.github/workflows/ory-config.yml` in your repository:
+
+```yaml title=".github/workflows/ory-config.yml"
+name: Sync Ory Network configuration
+
+env:
+  ORY_PROJECT_ID: "<project-id>"
+  ORY_WORKSPACE_ID: "<workspace-id>"
+  ORY_WORKSPACE_API_KEY: ${{ secrets.ORY_WORKSPACE_API_KEY }}
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync-config:
+    runs-on: ubuntu-latest
+    container: oryd/ory:v1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Push Ory Identities config
+        run: ory update identity-config --file identity-config.json
+
+      - name: Push Ory OAuth2 config
+        run: ory update oauth2-config --file oauth2-config.json
+
+      - name: Push Ory Permissions config
+        run: ory update permission-config --file permission-config.json
+```
+
+Add the `ORY_WORKSPACE_API_KEY` secret to your repository under **Settings → Secrets and variables → Actions**. See [GitHub's guide](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions#creating-secrets-for-a-repository) for details.
+
+Now every merge to `main` automatically applies your configuration changes to Ory Network. Open a pull request to review changes before they go live, and use `git revert` to roll back if needed.
+
+## Version Jsonnet snippets and base64-encoded assets
+
+Ory uses Jsonnet templates for OIDC claim mapping and Ory Actions webhook payloads. Store these as readable files in your repository and encode them to base64 when embedding in configuration files.
+
+### Organize your Jsonnet files
+
+```bash
+mkdir -p oidc-mapping actions-payload
+touch oidc-mapping/google.jsonnet
+touch actions-payload/registration.jsonnet
+```
+
+### Encode and embed
+
+After editing a Jsonnet file, convert it to base64 and paste it into the appropriate config field:
+
+```bash
+# macOS — copies to clipboard
+base64 < oidc-mapping/google.jsonnet | pbcopy
+
+# Linux
+base64 < oidc-mapping/google.jsonnet
+```
+
+For an Ory Actions webhook body:
+
+```json
+{
+  "hooks": [
+    {
+      "config": {
+        "body": "base64://PASTE_BASE64_STRING_HERE"
+      }
+    }
+  ]
+}
+```
+
+For an OIDC mapper:
+
+```json
+{
+  "oidc": {
+    "providers": [
+      {
+        "mapper_url": "base64://PASTE_BASE64_STRING_HERE"
+      }
+    ]
+  }
+}
+```
+
+When you push the updated config, Ory Network decodes the base64 string and stores the Jsonnet snippet internally.
+
+## Version identity schemas
+
+If you use custom identity schemas, store them in git alongside your other configuration. Copy the schema JSON from the Ory Console or extract it from the config file you exported earlier.
+
+To update an existing schema, encode the file and replace the `url` value in the config:
+
+```bash
+base64 < identity-schema.json | pbcopy
+```
+
+```json
+{
+  "schemas": [
+    {
+      "id": "7d1cf71e-57ae-40be-bddf-1f4c323e2349",
+      "url": "base64://PASTE_BASE64_STRING_HERE"
+    }
+  ]
+}
+```
+
+<Note>
+  You can update existing identity schemas via the CLI but cannot create new ones this way. Create new schemas in the Ory Console first, then manage them through GitOps.
+</Note>
+
+## Version email templates
+
+Email templates follow the same pattern. Store `.html` files in a dedicated directory, encode them to base64, and embed them in your identity configuration.
+
+```bash
+mkdir email-templates
+# Add your HTML templates
+base64 < email-templates/recovery.html | pbcopy
+```
+
+For more details on email template configuration, see the [Custom email templates blog post](https://www.ory.com/custom-email-templates).
+
+## Ory Permissions Language
+
+For projects using the Ory Permission Language (OPL), version your `.ts` policy file and push it through CI:
+
+```bash
+ory update opl --file permissions.ts
+```
+
+Add this step to your workflow alongside the other `ory update` commands.

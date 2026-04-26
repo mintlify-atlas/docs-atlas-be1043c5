@@ -1,0 +1,195 @@
+---
+title: "Migrate to Ory from your current identity provider"
+description: "Plan and execute a migration to Ory Network from Auth0 or another IAM system. Covers migration phases, rollout strategies, and identity migration methods."
+keywords: ["migrate to ory", "auth0 migration", "identity migration", "ory migration guide", "iam migration"]
+---
+
+Migrating your identity and access management system to Ory Network is a structured process. Done well, your users experience no disruption and you gain full control over your identity infrastructure. This guide walks you through the key phases of a migration and points you to the specific guides for your scenario.
+
+## Migration phases
+
+A typical migration to Ory Network has four phases:
+
+<Steps>
+
+<Step title="Understand your current IAM system">
+
+Before writing any code, document every identity-related flow in your application: registration, login, logout, MFA, account recovery, social sign-in, token refresh, consent screens, and any integrations with external systems (CRMs, payment gateways, partner APIs).
+
+Key questions to answer:
+
+- What authentication methods do your users currently use (password, social, SAML, passkeys)?
+- Which user attributes and metadata do you store in identity profiles?
+- Do you have access to hashed credentials from your current provider?
+- What are your compliance requirements (GDPR, CCPA, SOC 2)?
+- Which applications share the same identity store?
+
+The output of this phase is a living document with flow diagrams and an inventory of all identity flows. This becomes your migration blueprint.
+
+</Step>
+
+<Step title="Plan your migration strategy">
+
+Choose a **rollout strategy** and an **identity migration strategy** based on your system's complexity, user base size, and risk tolerance.
+
+#### Rollout strategy
+
+| Strategy | Best for | Key tradeoff |
+|----------|----------|--------------|
+| **Single-phase** | Small user bases, simple systems, acceptable downtime | Fast and simple, but all users are affected at once |
+| **Multi-phase** | Complex systems, multiple apps, risk-averse teams | Reduced risk and no downtime, but more coordination required |
+
+A single-phase rollout migrates all users and applications in one "go-live" event. A multi-phase rollout migrates specific applications or user segments in separate phases, allowing you to learn and adjust between phases.
+
+#### Identity migration strategy
+
+| Strategy | Also called | When to use |
+|----------|-------------|-------------|
+| **Bulk migration** | Big-bang, offline | You have password hashes; planned downtime is acceptable |
+| **Graceful migration** | Just-in-time, trickle | No password hashes available; zero-downtime required |
+
+**Bulk identity migration** imports all user accounts and credentials at once. Users can log in immediately after the cutover using their existing passwords.
+
+**Graceful identity migration** runs old and new systems in parallel. Users are migrated individually the first time they authenticate with Ory, using a password migration webhook that forwards the login attempt to the old system and creates the identity in Ory on success. This approach requires no password hashes and causes no downtime, but extends the migration window.
+
+<Tip>
+Multi-phase rollouts can combine both strategies — bulk migration for your first application, graceful migration for subsequent phases.
+</Tip>
+
+</Step>
+
+<Step title="Set up your Ory project and migrate identities">
+
+Create your Ory Network project and configure it to match your existing identity model:
+
+```shell
+ory create project --name "Production"
+export ORY_PROJECT_ID="{your-project-id}"
+export ORY_WORKSPACE_ID="{your-workspace-id}"
+```
+
+Configure your identity schema to match your existing user attributes. For example, to use the standard email preset:
+
+```shell
+ory patch identity-config \
+  --project $ORY_PROJECT_ID \
+  --workspace $ORY_WORKSPACE_ID \
+  --replace '/identity/default_schema_id="preset://email"'
+```
+
+Then import your users. For bulk migration from Auth0, see the [Auth0 migration guide](#migrate-from-auth0) below.
+
+After importing, verify users were created successfully:
+
+```shell
+ory list identities --project $ORY_PROJECT_ID --workspace $ORY_WORKSPACE_ID
+```
+
+</Step>
+
+<Step title="Test, validate, and go live">
+
+Before switching production traffic to Ory:
+
+- Test login flows with migrated user accounts
+- Verify MFA, account recovery, and social sign-in work as expected
+- Test all application integrations (OAuth2 clients, API access, webhooks)
+- Run load tests against your Ory project to validate performance
+- Set up monitoring and alerting for authentication errors
+
+When you are satisfied, update your application's Ory SDK base URL from the tunnel (`http://localhost:4000`) to your production Ory project URL or custom domain, deploy, and monitor closely.
+
+</Step>
+
+</Steps>
+
+## Migrate from Auth0
+
+Ory provides a dedicated migration path for Auth0 users. The process migrates user accounts with email/password credentials from an Auth0 database connection to Ory Network.
+
+### Prerequisites
+
+Before you begin, ensure you have:
+
+- Auth0 account with admin access to export user data
+- An Ory project (see [Create a project](/getting-started/quickstart))
+- [`jq`](https://jqlang.org/) and [`gzip`](https://www.gnu.org/software/gzip/) installed
+- Ory CLI installed
+
+### Overview
+
+The Auth0 migration has three steps:
+
+1. **Export Auth0 data** — export user records and optionally request password hashes
+2. **Configure Ory** — set up your identity schema to match Auth0's email/password model
+3. **Import users** — run the migration script to create identities in Ory
+
+### Step 1: Export Auth0 data
+
+Set your Auth0 credentials as environment variables:
+
+```shell
+export AUTH0_DOMAIN="your_auth0_domain.auth0.com"
+export AUTH0_CONNECTION_ID="your_auth0_connection_id"
+export AUTH0_TOKEN="your_auth0_management_api_token"
+```
+
+Run the export script to produce `AUTH0_USERDATA.json` in your current directory:
+
+```shell
+bash <(curl https://raw.githubusercontent.com/ory/docs/master/code-examples/migrate-to-ory/0-get-auth0-user-data.sh)
+```
+
+To get password hashes from Auth0 (optional but recommended), open a support ticket in your Auth0 dashboard under **Get Support** → **Tickets** → **Open Ticket** and request a tenant password hash export.
+
+<Note>
+Password hash exports require a paid Auth0 plan. Free tier users must use graceful identity migration instead.
+</Note>
+
+### Step 2: Configure your Ory project
+
+```shell
+export ORY_PROJECT_ID="{your-project-id}"
+export ORY_WORKSPACE_ID="{your-workspace-id}"
+
+ory patch identity-config --project $ORY_PROJECT_ID --workspace $ORY_WORKSPACE_ID \
+  --replace '/identity/default_schema_id="preset://email"'
+```
+
+### Step 3: Import users
+
+Set the import variables and run the migration script:
+
+```shell
+# Set to "false" if you HAVE password hashes; "true" if you DO NOT
+export RESERVE_ONLY="false"
+export AUTH0_USERDATA="{path-to-AUTH0_USERDATA.json}"
+export AUTH0_PWEXPORT="{path-to-password-hashes.json}"
+
+bash <(curl https://raw.githubusercontent.com/ory/docs/master/code-examples/migrate-to-ory/1-create-ory-identities.sh)
+```
+
+After the script completes, verify the import:
+
+```shell
+ory list identities --project $ORY_PROJECT_ID --workspace $ORY_WORKSPACE_ID
+```
+
+### Post-migration checklist
+
+- Test login with several migrated accounts
+- If migrating without password hashes (`RESERVE_ONLY="true"`), enable account recovery in your Ory project so users can set a new password
+- Notify users of the migration timeline and any required actions
+- Monitor authentication error rates during the first few days after go-live
+
+## Other migration paths
+
+If you are migrating from a provider other than Auth0, use the general migration framework:
+
+1. **Inventory your flows** — document every identity-related flow and map them to Ory Network capabilities
+2. **Choose your strategy** — single vs. multi-phase rollout, bulk vs. graceful identity migration
+3. **Define your identity schema** — model your user attributes in Ory using JSON Schema
+4. **Migrate identities** — import user accounts via the Ory Admin API or CLI
+5. **Integrate your backend and frontend** — update your application code to use the Ory SDK
+6. **Test and validate** — verify correctness before go-live
+7. **Go live** — complete the cutover checklist and production readiness review
